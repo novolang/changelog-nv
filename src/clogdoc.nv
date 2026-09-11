@@ -1,0 +1,376 @@
+// clogdoc.nv — the load-bearing interface: Unreleased is a release with
+// no version.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// THE IDEA.  Keep a Changelog says a document opens with an
+// `## [Unreleased]` section and that a release is cut by giving that
+// section a version and a date.  Almost every tool models the two as
+// different things — a list of pending lines, and then a list of past
+// releases — and pays for it three times over: the pending section
+// cannot be checked by the rules that check a release, cannot be
+// rendered by the renderer that renders one, and cannot be promoted
+// without re-serialising the file.
+//
+// Here `ClogRelease.version` is a `?Version`, `None` is Unreleased, and
+// the three consequences fall out:
+//
+//   * `clogcheck.check` runs the same rules over it.  A `### Fixed`
+//     with no entries under it is the same fault whether or not the
+//     section has shipped.
+//   * `clogrender.release_into` writes it in the same shape, so what a
+//     person reads in the pending section is what they will read in the
+//     released one.
+//   * `promote(doc, version, date)` is a TWO-FIELD CHANGE.  That is the
+//     publish: `novo pkg publish` cutting 0.2.0 is this call and
+//     nothing else.
+//
+// THE SIX KINDS ARE CLOSED, AND AN UNKNOWN HEADING IS AN ERROR.  Keep a
+// Changelog 1.1 names exactly six — Added, Changed, Deprecated,
+// Removed, Fixed, Security — and a document with a `### Performance`
+// section is a document whose author invented a kind.  Modelling that
+// as a seventh, open kind would mean a reader could not tell a typo
+// (`### Fixes`) from a decision, and the whole value of the six is that
+// a consumer knows what they mean.  So `ClogKind` is closed and
+// `clogcheck` reports the rest by name.
+//
+// WHAT IS KEPT VERBATIM.  Every entry's text is a byte RANGE into the
+// document, so a round trip through `parse` and `clogrender.document`
+// returns the author's own words, links and markup — an entry that
+// carries an inline code span or a pull-request link survives, because
+// nothing here reads inside it.
+
+use clogerr
+use mdparse
+use semver
+use civil
+
+// One of Keep a Changelog's six kinds.
+//
+// Closed on purpose; see the module header.
+pub enum ClogKind
+    // For new features.
+    ClogAdded
+    // For changes in existing functionality.
+    ClogChanged
+    // For soon-to-be removed features.
+    ClogDeprecated
+    // For now removed features.
+    ClogRemoved
+    // For any bug fixes.
+    ClogFixed
+    // In case of vulnerabilities.
+    ClogSecurity
+
+// One bullet under a kind.
+//
+// `text` is a byte range into the document, so the author's own
+// markup survives a round trip untouched.  `clogdoc.entry_text` is how
+// it becomes a string.
+pub struct ClogEntry
+    start: Int
+    end: Int
+    // How deeply nested the bullet is: 0 for a top-level one, 1 for a
+    // sub-bullet.  Kept because a changelog that groups its entries
+    // under a heading of its own is a changelog whose shape a renderer
+    // has to reproduce.
+    depth: Int
+
+// One kind's section of one release.
+pub struct ClogSection
+    kind: ClogKind
+    entries: [ClogEntry]
+
+// One release, or the Unreleased section.
+//
+// THE LOAD-BEARING TYPE.  `version` is `None` for Unreleased, and
+// everything in this package treats the two the same because they are
+// the same shape.
+pub struct ClogRelease
+    // `None` for the Unreleased section.
+    version: ?semver.Version
+    // The release date.  `None` for Unreleased, and also for a released
+    // section whose heading carried no date — which is a fault
+    // `clogcheck` reports rather than a reason to refuse the document.
+    date: ?civil.CivilDate
+    // Whether the heading carried a `[YANKED]` marker.  Keep a
+    // Changelog 1.1's own notation, and worth a field because a
+    // consumer choosing a version to upgrade to must not pick one.
+    yanked: Bool
+    // The sections, in the order the document wrote them.  NOT sorted
+    // into the standard's order: that is `clogcheck`'s finding, and
+    // reordering here would have destroyed a document the caller only
+    // wanted to read.
+    sections: [ClogSection]
+    // Free text between the heading and the first `###` — a paragraph
+    // some projects write per release.  A byte range, empty when there
+    // is none.
+    preamble_start: Int
+    preamble_end: Int
+    // Where in the document this release's heading begins, so a caller
+    // editing the file knows what to splice.
+    heading_start: Int
+    // Where this release's section ends: the start of the next
+    // heading, or the end of the document.
+    section_end: Int
+
+// A whole CHANGELOG.md.
+pub struct ClogDoc
+    // The text this document was parsed from.  Every range in it
+    // indexes into this string.
+    source: Str
+    // The `# Changelog` title, as a range.  Empty when the document has
+    // none, which `clogcheck` reports.
+    title_start: Int
+    title_end: Int
+    // The paragraph under the title, before the first release — where
+    // Keep a Changelog's own boilerplate lives.  A range.
+    preamble_start: Int
+    preamble_end: Int
+    // Every release, newest first, as the standard requires and as the
+    // document wrote them.  `clogcheck` is what says the two disagree.
+    releases: [ClogRelease]
+    // The link reference definitions at the foot of the file —
+    // `[1.2.3]: https://…/compare/v1.2.2...v1.2.3`.  Kept as values
+    // because promoting a release has to add one, and a changelog whose
+    // links stop being maintained is one whose version headings stop
+    // being links.
+    links: [ClogLink]
+
+// One link reference definition at the foot of a changelog.
+pub struct ClogLink
+    // The label between the brackets: `Unreleased`, `1.2.3`.
+    label: Str
+    // The URL.
+    url: Str
+
+// ── Parsing ──────────────────────────────────────────────────────────
+
+// Read a CHANGELOG.md.
+//
+// Refuses only what cannot be read as a document at all.  Everything
+// that is merely WRONG about a changelog — a missing title, an
+// out-of-order release, an unknown `###` heading, a date that is not
+// ISO 8601 — is a `clogcheck` finding, because a tool that refused
+// those could not be pointed at a real project's file.
+//
+// ```novo
+// use clogdoc
+// use std.list
+//
+// fn main() [io]
+//     match clogdoc.parse("# Changelog\n\n## [Unreleased]\n")
+//         Ok(d)  => println("${list.len(d.releases)}")
+//         Err(_) => println("not a changelog")
+// ```
+pub fn parse(text: Str) -> Result<ClogDoc, clogerr.ClogError> []
+    todo("changelog-nv.clogdoc.parse")
+
+// Read a CHANGELOG.md under markdown options the caller chose.
+//
+// The document IS markdown, and deciding what is a heading is
+// CommonMark's business rather than this package's: a setext heading
+// (`Added` over a row of dashes) is one, a `###` inside a fenced code
+// block is not, and a regular expression over lines gets both wrong.
+// So the walk is markdown-nv's, and its options — the nesting limit,
+// the size bound, whether the GitHub extensions are on — are the
+// caller's, which is what this call is for.
+//
+// `parse` is this with `mdparse.commonmark_options()` and
+// `clogerr.default_depth()`, because the GitHub extensions change
+// nothing a changelog uses and a changelog arrives from a package
+// tarball, which is input from outside.
+pub fn parse_with(text: Str, options: mdparse.MdOptions) -> Result<ClogDoc, clogerr.ClogError> []
+    todo("changelog-nv.clogdoc.parse_with")
+
+// The 1-based line and column of a byte offset in a document.
+//
+// Every range and every finding in this package is a byte offset, and
+// this is the one place they become a position — computed once, by a
+// caller that is about to print one, rather than carried on every
+// value.
+pub fn position_of(d: ClogDoc, at: Int) -> (Int, Int) []
+    todo("changelog-nv.clogdoc.position_of")
+
+// An empty document with a title and Keep a Changelog's own preamble.
+//
+// What a tool scaffolding a new package writes, so that every
+// changelog in a registry opens the same way.
+pub fn empty_doc() -> ClogDoc []
+    todo("changelog-nv.clogdoc.empty_doc")
+
+// ── Reading ──────────────────────────────────────────────────────────
+
+// The Unreleased section, or `None` when the document has none.
+//
+// The call `novo pkg publish` makes first: a release with nothing in
+// its Unreleased section is a release whose notes nobody wrote.
+pub fn unreleased(d: ClogDoc) -> ?ClogRelease []
+    todo("changelog-nv.clogdoc.unreleased")
+
+// The release carrying a version, or `None`.
+pub fn release_of(d: ClogDoc, v: semver.Version) -> ?ClogRelease []
+    todo("changelog-nv.clogdoc.release_of")
+
+// The newest released version in the document, or `None` when every
+// section is Unreleased.
+//
+// What `clogbump.next_version` needs as its starting point, and what a
+// publish compares against the version being cut.
+pub fn latest_version(d: ClogDoc) -> ?semver.Version []
+    todo("changelog-nv.clogdoc.latest_version")
+
+// Every version in the document, in the order it wrote them.
+pub fn versions(d: ClogDoc) -> [semver.Version] []
+    todo("changelog-nv.clogdoc.versions")
+
+// One release's section of a kind, or `None`.
+pub fn section_of(r: ClogRelease, k: ClogKind) -> ?ClogSection []
+    todo("changelog-nv.clogdoc.section_of")
+
+// How many entries a release carries, across every kind.
+//
+// The number a publish checks against zero.
+pub fn entry_count(r: ClogRelease) -> Int []
+    todo("changelog-nv.clogdoc.entry_count")
+
+// Whether a release has no entries at all.
+//
+// Not `entry_count(r) == 0` at every call site, because "the
+// Unreleased section is empty" is the question a publish asks and it
+// deserves a name.
+pub fn is_empty(r: ClogRelease) -> Bool []
+    todo("changelog-nv.clogdoc.is_empty")
+
+// Whether a release is the Unreleased section.
+pub fn is_unreleased(r: ClogRelease) -> Bool []
+    todo("changelog-nv.clogdoc.is_unreleased")
+
+// One entry's text, as the author wrote it.
+//
+// The bullet marker and the indentation are not part of it; everything
+// after them is, markup and links included.
+pub fn entry_text(d: ClogDoc, e: ClogEntry) -> Str []
+    todo("changelog-nv.clogdoc.entry_text")
+
+// Every entry of a release, in document order, as text.
+//
+// The convenience a consumer rendering release notes wants, so it does
+// not walk six sections to build one list.
+pub fn entry_texts(d: ClogDoc, r: ClogRelease) -> [Str] []
+    todo("changelog-nv.clogdoc.entry_texts")
+
+// The document's title, or the empty string.
+pub fn title(d: ClogDoc) -> Str []
+    todo("changelog-nv.clogdoc.title")
+
+// The text between the title and the first release.
+pub fn preamble(d: ClogDoc) -> Str []
+    todo("changelog-nv.clogdoc.preamble")
+
+// One release's own section of the document, verbatim.
+//
+// Heading and all, exactly as it stands in the file.  What a release
+// page shows and what a tool extracting "the notes for 1.2.3" wants,
+// and it is a slice rather than a render, so nothing is reformatted.
+pub fn release_text(d: ClogDoc, r: ClogRelease) -> Str []
+    todo("changelog-nv.clogdoc.release_text")
+
+// The link definition with a label, or `None`.
+pub fn link_of(d: ClogDoc, label: Str) -> ?ClogLink []
+    todo("changelog-nv.clogdoc.link_of")
+
+// ── The six kinds ────────────────────────────────────────────────────
+
+// A kind's heading text, in Keep a Changelog's own spelling: `Added`,
+// `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
+//
+// ```novo
+// use clogdoc
+//
+// fn main() [io]
+//     println(clogdoc.kind_name(ClogSecurity))
+// ```
+pub fn kind_name(k: ClogKind) -> Str []
+    todo("changelog-nv.clogdoc.kind_name")
+
+// A kind from its heading text, or `None`.
+//
+// Case-insensitive, because a heading is prose and `### added` is the
+// same section to a reader.  `None` for anything outside the six —
+// which is what makes `### Performance` a `clogcheck` finding rather
+// than a seventh kind.
+pub fn kind_from_name(s: Str) -> ?ClogKind []
+    todo("changelog-nv.clogdoc.kind_from_name")
+
+// The six kinds in the standard's own order.
+//
+// The order `clogrender` writes and `clogcheck` compares against. A
+// list rather than six constants, because every caller that wants them
+// wants them in order.
+pub fn kinds() -> [ClogKind] []
+    todo("changelog-nv.clogdoc.kinds")
+
+// Where a kind sits in the standard's order, from 0 to 5.
+pub fn kind_order(k: ClogKind) -> Int []
+    todo("changelog-nv.clogdoc.kind_order")
+
+// ── Editing ──────────────────────────────────────────────────────────
+//
+// Three calls.  Everything else a tool wants to do to a changelog is
+// one of them, and the first is the publish.
+
+// Give the Unreleased section a version and a date.
+//
+// THE PUBLISH.  Everything the section holds stays where it is; the
+// heading gains a version, a date and a link definition, and a fresh
+// empty Unreleased section is opened above it.
+//
+// The date is the CALLER's: a `core` package has no clock, and a
+// changelog stamped with a date the library invented would be a
+// changelog nobody could reproduce.  That is the same rule tar-nv and
+// zip-nv follow for their headers.
+//
+// Refuses a document with no Unreleased section, and one whose
+// Unreleased section is empty — because a release with no notes is the
+// thing this package exists to make impossible to publish by accident.
+//
+// ```novo
+// use clogdoc
+// use civil
+// use semver
+//
+// fn main() [io]
+//     match clogdoc.parse("# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a thing\n")
+//         Err(_) => println("not a changelog")
+//         Ok(d)  =>
+//             match semver.parse("0.2.0")
+//                 None    => println("not a version")
+//                 Some(v) =>
+//                     match civil.date(2026, 9, 11)
+//                         Err(_)   => println("not a date")
+//                         Ok(when) =>
+//                             match clogdoc.promote(d, v, when)
+//                                 Ok(_)  => println("cut")
+//                                 Err(_) => println("refused")
+// ```
+pub fn promote(d: ClogDoc, v: semver.Version,
+               when: civil.CivilDate) -> Result<ClogDoc, clogerr.ClogError> []
+    todo("changelog-nv.clogdoc.promote")
+
+// Add an entry under a kind of the Unreleased section.
+//
+// What a commit hook or a `changelog add` subcommand calls.  Creates
+// the Unreleased section and the kind's `###` heading when either is
+// absent, in the standard's order, so a document never acquires a
+// section in the wrong place.
+pub fn add_entry(d: ClogDoc, k: ClogKind, text: Str) -> Result<ClogDoc, clogerr.ClogError> []
+    todo("changelog-nv.clogdoc.add_entry")
+
+// Set a link definition, replacing any of the same label.
+//
+// The foot of the file, where `[1.2.3]: …/compare/v1.2.2...v1.2.3`
+// lives.  `promote` calls it; a caller whose forge spells a comparison
+// URL differently calls it itself, which is why it is public.
+pub fn set_link(d: ClogDoc, label: Str, url: Str) -> ClogDoc []
+    todo("changelog-nv.clogdoc.set_link")

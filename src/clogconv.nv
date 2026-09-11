@@ -1,0 +1,250 @@
+// clogconv.nv — Conventional Commits, and the mapping neither standard
+// defines.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// WHAT A CONVENTIONAL COMMIT IS.  A subject line of the shape
+//
+//     <type>[(<scope>)][!]: <description>
+//
+// then a blank line, a body, a blank line, and footers of the shape
+// `Token: value` or `Token #value`.  `BREAKING CHANGE:` is a footer
+// with a space in its token, which is the one exception the
+// specification makes and the one every regular expression misses.
+//
+// THE MAPPING IS A VALUE, AND THAT IS THE DECISION IN THIS MODULE.
+// Conventional Commits has an OPEN type vocabulary — `feat` and `fix`
+// are the only two it names — and Keep a Changelog has exactly SIX
+// kinds.  Nothing anywhere defines a mapping between them.  git-cliff
+// puts one in a configuration file for exactly that reason, and a
+// library that hard-coded one would silently drop a project's `perf:`
+// commits from its changelog: not an error, not a warning, just a
+// section that never appears.
+//
+// So `ClogMap` is a value the caller supplies, `default_map()` is a
+// defensible starting point with its choices argued below, and
+// `unmapped_types` is how a caller finds out which of its own types the
+// map has nothing to say about.
+//
+// WHAT A TYPE IS NOT.  `type_ok` checks the specification's grammar —
+// a noun, no spaces — and nothing about which nouns are allowed,
+// because the specification allows any of them.  A tool that wants a
+// closed vocabulary checks the map.
+
+use clogdoc
+
+// One parsed commit.
+//
+// Every string here is DECODED out of the message rather than a range
+// into it, because a commit message is not a document a caller renders
+// back: it is input, and the useful form is the parts.
+pub struct ClogCommit
+    // The type: `feat`, `fix`, `docs`, whatever the project uses.
+    // Empty when the subject is not a conventional commit at all, which
+    // `is_conventional` is the check for.
+    commit_type: Str
+    // The scope between the parentheses, or empty.
+    scope: Str
+    // Whether the subject carried a `!` before the colon.
+    breaking: Bool
+    // The description after the colon, trimmed.
+    description: Str
+    // The paragraphs between the subject and the footers.
+    body: Str
+    // The trailers at the foot of the message.
+    footers: [ClogFooter]
+    // The subject line as it was written, for a caller that wants to
+    // show what it parsed.
+    subject: Str
+
+// One footer of a commit message.
+//
+// `separator` is `": "` or `" #"`, kept because the specification
+// distinguishes them and a caller reproducing a message has to.
+pub struct ClogFooter
+    token: Str
+    separator: Str
+    value: Str
+
+// What a commit type means to a changelog.
+//
+// One entry per type the project uses.  `kind` is which of Keep a
+// Changelog's six sections the commit goes in; `hidden` is a type whose
+// commits are deliberately not in the changelog at all — `chore`,
+// `ci`, `test` — and it is a field rather than an absence from the list
+// because "this type is hidden" and "nobody has decided about this
+// type" are different states, and `unmapped_types` only reports the
+// second.
+pub struct ClogRule
+    commit_type: Str
+    kind: clogdoc.ClogKind
+    hidden: Bool
+
+// The whole mapping.
+pub struct ClogMap
+    rules: [ClogRule]
+    // Where a commit whose type is not in `rules` goes.  `None` means
+    // it is dropped; the default is `None`, so an unmapped type is
+    // invisible until `unmapped_types` is asked — which is why that
+    // call exists.
+    fallback: ?clogdoc.ClogKind
+    // Whether a breaking change goes in `Changed` whatever its type
+    // says.  True by default: a `fix!` that breaks a caller is a
+    // change a reader must not find under `Fixed`.
+    breaking_is_changed: Bool
+
+// ── Parsing ──────────────────────────────────────────────────────────
+
+// Read a subject line.
+//
+// Answers a commit with an empty `commit_type` when the line is not
+// conventional, rather than a `Result`: a repository's history contains
+// plain subjects, a tool walking one has to keep going, and an error
+// per non-conventional commit would make the common case travel the
+// failure path.  `is_conventional` is the question.
+//
+// ```novo
+// use clogconv
+//
+// fn main() [io]
+//     let c = clogconv.parse_subject("feat(parser)!: drop the old syntax")
+//     println("${c.commit_type} ${c.scope} ${c.breaking}")
+// ```
+pub fn parse_subject(line: Str) -> ClogCommit []
+    todo("changelog-nv.clogconv.parse_subject")
+
+// Read a whole commit message: subject, body and footers.
+//
+// The footer section is what the specification says it is — everything
+// after the last blank line that parses as a sequence of trailers — so
+// a body whose last paragraph happens to contain a colon is a body and
+// not a footer.
+pub fn parse_message(message: Str) -> ClogCommit []
+    todo("changelog-nv.clogconv.parse_message")
+
+// Whether a subject is a conventional commit at all.
+pub fn is_conventional(c: ClogCommit) -> Bool []
+    todo("changelog-nv.clogconv.is_conventional")
+
+// Whether a commit declares a breaking change, by either spelling.
+//
+// THE CALL THAT MATTERS, and it is a function because there are two
+// spellings and a caller that checked only one gets the version wrong.
+// A `!` in the subject and a `BREAKING CHANGE:` footer are equivalent
+// under the specification, and a project's own history uses both.
+//
+// ```novo
+// use clogconv
+//
+// fn main() [io]
+//     let c = clogconv.parse_message("fix: a thing\n\nBREAKING CHANGE: the flag is gone\n")
+//     println("${clogconv.is_breaking(c)}")
+// ```
+pub fn is_breaking(c: ClogCommit) -> Bool []
+    todo("changelog-nv.clogconv.is_breaking")
+
+// The description of the break, from a `BREAKING CHANGE` footer, or
+// the empty string.
+//
+// What goes in the changelog under the entry, because "this breaks" is
+// not something a reader can act on and "the `--strict` flag is gone;
+// use `--checks=all`" is.
+pub fn breaking_description(c: ClogCommit) -> Str []
+    todo("changelog-nv.clogconv.breaking_description")
+
+// A footer's value by token, or the empty string.
+//
+// Case-insensitive on the token, because `Reviewed-by` and
+// `Reviewed-By` are one trailer to git.
+pub fn footer(c: ClogCommit, token: Str) -> Str []
+    todo("changelog-nv.clogconv.footer")
+
+// Every footer with a token, in order.
+//
+// A list because `Co-authored-by` legitimately repeats.
+pub fn footers_of(c: ClogCommit, token: Str) -> [Str] []
+    todo("changelog-nv.clogconv.footers_of")
+
+// Whether a string is a legal commit type under the specification's
+// grammar: a noun, no whitespace, at least one character.
+//
+// Says nothing about WHICH nouns are allowed, because the
+// specification allows any of them.  A project with a closed vocabulary
+// checks its own `ClogMap`.
+pub fn type_ok(s: Str) -> Bool []
+    todo("changelog-nv.clogconv.type_ok")
+
+// ── Rendering a commit back ──────────────────────────────────────────
+
+// A subject line built from the parts.
+//
+// The inverse of `parse_subject` for every subject it reads as
+// conventional, which is the property a commit-message hook that
+// rewrites a subject needs.
+pub fn subject_of(c: ClogCommit) -> Str []
+    todo("changelog-nv.clogconv.subject_of")
+
+// The changelog entry a commit becomes.
+//
+// The description, with the scope in front of it when there is one:
+// `parser: drop the old syntax`.  A breaking commit's entry opens with
+// `**BREAKING**` and carries the footer's description when it has one,
+// because that is what a reader deciding whether to upgrade is looking
+// for.
+pub fn entry_of(c: ClogCommit) -> Str []
+    todo("changelog-nv.clogconv.entry_of")
+
+// ── The mapping ──────────────────────────────────────────────────────
+
+// A defensible default, and every choice in it is arguable.
+//
+// `feat` → Added, `fix` → Fixed, `perf` → Changed, `refactor` →
+// Changed, `revert` → Removed, `security` → Security, `deprecate` →
+// Deprecated; `chore`, `ci`, `build`, `test`, `style` and `docs`
+// hidden.  The fallback is `None`, so a type nobody mapped is dropped
+// and `unmapped_types` is what reports it.
+//
+// Two of those are worth naming.  `docs` is HIDDEN, which is wrong for
+// a documentation project and right for a library, and it is the first
+// line most callers will change.  `revert` → Removed is wrong when the
+// thing reverted was itself a removal, and no mapping can know that.
+//
+// ```novo
+// use clogconv
+// use std.list
+//
+// fn main() [io]
+//     println("${list.len(clogconv.default_map().rules)}")
+// ```
+pub fn default_map() -> ClogMap []
+    todo("changelog-nv.clogconv.default_map")
+
+// A map with one type's rule set, replacing any rule for that type.
+pub fn with_rule(m: ClogMap, commit_type: Str, k: clogdoc.ClogKind, hidden: Bool) -> ClogMap []
+    todo("changelog-nv.clogconv.with_rule")
+
+// Where a commit goes, or `None` when it goes nowhere.
+//
+// `None` for a hidden type, and for an unmapped type when the map has
+// no fallback.  A breaking commit answers `ClogChanged` when the map
+// says so, whatever its type maps to.
+pub fn kind_of(m: ClogMap, c: ClogCommit) -> ?clogdoc.ClogKind []
+    todo("changelog-nv.clogconv.kind_of")
+
+// Whether a map has a rule for a type.
+pub fn has_rule(m: ClogMap, commit_type: Str) -> Bool []
+    todo("changelog-nv.clogconv.has_rule")
+
+// The types a list of commits uses that the map says nothing about.
+//
+// THE CALL THAT KEEPS A SILENT DROP FROM BEING SILENT.  A project that
+// adopts this package and runs it over its own history gets told which
+// of its types are about to vanish from its changelog, before the
+// changelog is written.  Each type appears once, in the order first
+// seen.
+pub fn unmapped_types(m: ClogMap, commits: [ClogCommit]) -> [Str] []
+    todo("changelog-nv.clogconv.unmapped_types")
+
+// The commits a map would put in a kind, in the order given.
+pub fn commits_for(m: ClogMap, commits: [ClogCommit], k: clogdoc.ClogKind) -> [ClogCommit] []
+    todo("changelog-nv.clogconv.commits_for")

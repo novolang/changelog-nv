@@ -1,0 +1,64 @@
+[package]
+name        = "changelog-nv"
+version     = "0.0.1"
+description = "Keep a Changelog 1.1 and Conventional Commits together: a CHANGELOG.md parsed into releases with semver versions, calendar dates and the six change kinds; a commit subject parsed into type, scope, breaking flag and description; the next version derived from a range of commits under the pre-1.0 rule; a release section rendered into a caller's buffer; and a document checked against the standard with reasons.  Unreleased is a release with no version, which is what makes promoting one a two-field change.  Interface only — every body is a todo()."
+license     = "Apache-2.0"
+
+# An INTERFACE release: every `pub fn` body is a `todo()`, so the
+# signatures and the effect rows are published and nothing is
+# implemented.  `novo pkg publish` recognises the shape and requires
+# both the draft stability and the 0.0.x version; the first
+# implementation is the 0.1.0 published over it.
+stability   = "draft"
+
+# `core`.  A changelog is a string the caller already holds and a
+# commit subject is another one; parsing either is arithmetic over
+# bytes, and rendering writes into a buffer the caller owns.  Nothing
+# is read, no repository is opened — the commits arrive as values,
+# which is what keeps this package `[]` and what makes it testable
+# against a fixture instead of against a clone.
+#
+# THE CLOCK IS THE ONE PLACE THIS COSTS SOMETHING, and it is named
+# rather than hidden: promoting an Unreleased section stamps a date,
+# and a `core` package has none.  So `promote` takes the date, and
+# `today` is the caller's to answer.
+layer       = "core"
+
+category    = "tooling"
+
+tags        = ["changelog", "keep-a-changelog", "conventional-commits", "semver", "release", "git-cliff", "sans-io"]
+repository  = "https://github.com/novolang/changelog-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.8.9"
+
+# A library: no `main`, so `novo pkg build` type-checks and
+# effect-checks every module under `src/` and writes no binary.
+
+[docs.pages]
+"README.md" = "Unreleased is a release with no version, and promoting one is the publish"
+
+# Three `core` dependencies, each for a type that crosses the boundary
+# rather than for a convenience.
+[dependencies]
+# semver-nv, for the VERSION.  A release heading carries one, a bump
+# produces one, and comparing two is how `check` finds a changelog whose
+# releases are out of order.  Answering a `Str` instead would make every
+# consumer parse it again, and `novo pkg publish`'s own monotonicity
+# rule is exactly this comparison.
+semver-nv = "^0.1.4"
+
+# calendar-nv, for the DATE.  Keep a Changelog's heading is
+# `## [1.2.3] - 2026-09-11`, an ISO 8601 calendar date, and `CivilDate`
+# is that value.  A `Str` would have made "is this changelog in
+# chronological order" a string comparison that happens to work for
+# four-digit years and stops at the first non-ISO heading somebody
+# writes.
+calendar-nv = "^0.0.2"
+
+# markdown-nv, for the HEADINGS.  A changelog is markdown, and deciding
+# what is a heading is CommonMark's business rather than this package's:
+# a setext heading (`Added` over a row of dashes) is a heading, a `###`
+# inside a fenced code block is not, and a regular expression over lines
+# gets both wrong.  git-cliff's own parser is that regular expression,
+# and the failure is silent — a section simply does not appear.
+markdown-nv = "^0.0.1"

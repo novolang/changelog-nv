@@ -1,0 +1,186 @@
+// clogcheck.nv — a document against the standard, with reasons.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// `check` CANNOT FAIL.  A changelog that does not follow Keep a
+// Changelog is the ANSWER — a list of findings a person acts on — and
+// modelling it as an error would make the ordinary case, a real
+// project's real file, travel the failure path.  The same split
+// schema-nv and openapi-nv make, for the same reason: everything
+// genuinely unreadable is a `clogerr.ClogError` out of
+// `clogdoc.parse`, and everything else is a finding.
+//
+// EVERY FINDING NAMES A PLACE.  A byte offset into the document, so a
+// caller renders `CHANGELOG.md:14:1` in its own diagnostic shape.  A
+// finding about the document as a whole — no title, no Unreleased
+// section — carries offset 0, which is where the thing that is missing
+// would have gone.
+//
+// THE LIST IS EVERY FINDING AND NOT THE FIRST.  A changelog with six
+// problems should tell a person about six.
+
+use clogdoc
+use semver
+
+// How serious a finding is.
+//
+// The split a caller gates on.  `ClogMustFix` is a document a consumer
+// will read wrongly; `ClogShouldFix` is a document that is merely not
+// in the standard's shape.  A publish gate that refused on the second
+// class could not be turned on for an existing project, which is the
+// same argument sarif-nv's two error types make.
+pub enum ClogSeverity
+    ClogMustFix
+    ClogShouldFix
+
+// One thing wrong with a changelog.
+pub enum ClogIssue
+    // No `# Changelog` title.  Should-fix: every consumer can still
+    // read the releases.
+    ClogNoTitle(at: Int)
+    // No `## [Unreleased]` section.  Should-fix on its own, and the
+    // reason `clogdoc.promote` refuses: a project with no Unreleased
+    // section has nowhere to write down what it is doing.
+    ClogNoUnreleased(at: Int)
+    // A `###` heading that is not one of the six kinds.  Must-fix: a
+    // consumer grouping by kind silently drops it, and a reader cannot
+    // tell a typo from a decision.
+    ClogUnknownKind(at: Int, heading: Str)
+    // A kind's section with no entries under it.  Should-fix: a heading
+    // a reader stops trusting.
+    ClogEmptySection(at: Int, kind: Str)
+    // The same kind twice in one release.  Must-fix: a consumer reading
+    // "the Added section" gets one of them, and which one is an
+    // implementation detail.
+    ClogDuplicateKind(at: Int, kind: Str)
+    // The sections of a release are not in the standard's order.
+    // Should-fix.
+    ClogSectionOrder(at: Int, kind: Str)
+    // A release heading with no date.  Must-fix: `## [1.2.3]` with no
+    // date is a release nobody can place in time, and a consumer
+    // ordering by date has nothing to order it by.
+    ClogNoDate(at: Int, version: Str)
+    // A date that is not an ISO 8601 calendar date.  Must-fix, and it
+    // is the finding calendar-nv's parser produces rather than one this
+    // package guesses at.
+    ClogBadDate(at: Int, text: Str)
+    // A release heading whose version does not parse as a semantic
+    // version.  Must-fix.
+    ClogBadVersion(at: Int, text: Str)
+    // Two releases with the same version.
+    ClogDuplicateVersion(at: Int, version: Str)
+    // The releases are not newest first.  Must-fix: Keep a Changelog
+    // says the latest comes first, and a consumer that took the first
+    // release as the latest — which every consumer does — gets the
+    // wrong one.
+    ClogVersionOrder(at: Int, version: Str, after: Str)
+    // A release's date is earlier than one below it.  Should-fix, and
+    // separate from the version order because a project that
+    // back-ported a patch legitimately has one.
+    ClogDateOrder(at: Int, version: Str)
+    // A version heading that is a link reference with no definition at
+    // the foot of the file.  Should-fix: the heading renders as literal
+    // brackets, which is how a reader finds out the links stopped being
+    // maintained.
+    ClogDanglingLink(at: Int, label: Str)
+    // A link definition nothing refers to.  Should-fix.
+    ClogUnusedLink(at: Int, label: Str)
+    // An entry that is empty, or is only whitespace.
+    ClogEmptyEntry(at: Int)
+    // A release with no sections at all.  Must-fix for a released
+    // section — a version nobody wrote notes for is a version a reader
+    // cannot decide about — and `clogdoc.is_empty` on the Unreleased
+    // one is the same fact under a name a publish reads.
+    ClogEmptyRelease(at: Int, version: Str)
+
+// Every finding about a document.
+//
+// Cannot fail; see the module header.
+//
+// ```novo
+// use clogcheck
+// use clogdoc
+// use std.list
+//
+// fn main() [io]
+//     match clogdoc.parse("## [1.0.0]\n")
+//         Err(_) => println("not a changelog")
+//         Ok(d)  => println("${list.len(clogcheck.check(d))}")
+// ```
+pub fn check(d: clogdoc.ClogDoc) -> [ClogIssue] []
+    todo("changelog-nv.clogcheck.check")
+
+// Every finding about one release.
+//
+// The same rules `check` runs, over one section — which is what makes
+// the Unreleased section checkable before it is promoted, and is the
+// whole argument for it being the same type as a release.
+pub fn check_release(d: clogdoc.ClogDoc, r: clogdoc.ClogRelease) -> [ClogIssue] []
+    todo("changelog-nv.clogcheck.check_release")
+
+// Every must-fix finding about a document.
+//
+// The list a gate acts on.  A publish that refused on `check` being
+// non-empty could not be turned on for an existing project; one that
+// refuses on this can.
+pub fn must_fix(d: clogdoc.ClogDoc) -> [ClogIssue] []
+    todo("changelog-nv.clogcheck.must_fix")
+
+// Whether a document has no must-fix findings.
+pub fn is_conforming(d: clogdoc.ClogDoc) -> Bool []
+    todo("changelog-nv.clogcheck.is_conforming")
+
+// How serious a finding is.
+pub fn severity_of(i: ClogIssue) -> ClogSeverity []
+    todo("changelog-nv.clogcheck.severity_of")
+
+// A one-line message for a finding.
+//
+// The sentence names the rule and what to do, not the parser's state:
+// "a release heading carries a date — write `## [1.2.3] - 2026-09-11`".
+pub fn issue_message(i: ClogIssue) -> Str []
+    todo("changelog-nv.clogcheck.issue_message")
+
+// The byte offset a finding refers to.
+pub fn issue_at(i: ClogIssue) -> Int []
+    todo("changelog-nv.clogcheck.issue_at")
+
+// The 1-based line and column of a finding, against a document.
+//
+// A separate call from `issue_at` because computing it costs a scan of
+// the document, and a caller counting findings does not want to pay for
+// one per finding.
+pub fn issue_position(d: clogdoc.ClogDoc, i: ClogIssue) -> (Int, Int) []
+    todo("changelog-nv.clogcheck.issue_position")
+
+// `<file>:<line>:<col>: <message>`, the form an editor's error list
+// parses.
+//
+// `file` is the caller's — this package never opened anything.
+pub fn render_issue(d: clogdoc.ClogDoc, i: ClogIssue, file: Str) -> Str []
+    todo("changelog-nv.clogcheck.render_issue")
+
+// ── The publish gate ─────────────────────────────────────────────────
+
+// What a publish should refuse a changelog for, before cutting a
+// version.
+//
+// THE CALL `novo pkg publish` WOULD MAKE.  Three questions in one,
+// because a publish that asked them separately would let a release
+// through on two of the three:
+//
+//   * is the document conforming — `must_fix` empty;
+//   * does the Unreleased section carry anything — a release with no
+//     notes is a release a reader cannot decide about;
+//   * is the version being cut greater than every version already in
+//     the document, which is the registry's own MONOTONIC rule asked
+//     one step earlier, where the answer is still cheap to act on.
+//
+// Answers the findings, so the refusal names what to fix rather than
+// saying no.
+pub fn check_for_publish(d: clogdoc.ClogDoc, cutting: semver.Version) -> [ClogIssue] []
+    todo("changelog-nv.clogcheck.check_for_publish")
+
+// Whether a document is ready for a version to be cut from it.
+pub fn ready_to_publish(d: clogdoc.ClogDoc, cutting: semver.Version) -> Bool []
+    todo("changelog-nv.clogcheck.ready_to_publish")

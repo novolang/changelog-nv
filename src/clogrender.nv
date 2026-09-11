@@ -1,0 +1,197 @@
+// clogrender.nv — the standard shape, into the caller's buffer.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// THREE SHAPES, AND THEY ARE THE PROJECT'S OWN CONVENTION.
+//
+//     *_into(out: Bytes, off: Int, …) -> Bytes   the caller's buffer
+//     *(…) -> Str                                the string
+//     *_to<W: Write[e]>(w, …) -> ?IoError [e]    the caller's sink
+//
+// `_into` is the primitive and the other two are written over it, so a
+// tool rendering a hundred releases into one page allocates once.
+//
+// WHAT "THE STANDARD SHAPE" IS, exactly, because a renderer that
+// approximated it would produce documents that do not round-trip
+// through `clogdoc.parse`:
+//
+//     ## [1.2.3] - 2026-09-11
+//
+//     ### Added
+//
+//     - the entry, as the author wrote it
+//
+// A version heading is a LINK REFERENCE (`[1.2.3]`), not a plain
+// string, because the foot of the file carries the comparison URL and
+// a heading that stopped being a link is a changelog whose links
+// silently stopped being maintained.  Sections are written in the
+// standard's own order whatever order the document had them in — which
+// is the ONE place this package reorders anything, and it does it only
+// when it is writing a section from scratch.
+//
+// THE ROUND TRIP IS THE TEST.  `document(parse(text))` is not `text`
+// for an arbitrary file — the whole point of a renderer is that it
+// normalises — but `parse(document(parse(text)))` equals
+// `parse(text)` for every document `parse` accepts, which is the
+// property that says the renderer and the parser agree about the
+// format.
+
+use clogdoc
+use clogconv
+use semver
+use civil
+
+// One release section, into a buffer the caller sized.
+//
+// THE PRIMITIVE.  Appends at `off` and answers the buffer;
+// `release_len` is how big it needs to be.
+//
+// An Unreleased release renders its heading as `## [Unreleased]` with
+// no date, which is the same code path as a released one because it is
+// the same type — see `clogdoc`'s header.
+pub fn release_into(out: Bytes, off: Int, d: clogdoc.ClogDoc, r: clogdoc.ClogRelease) -> Bytes []
+    todo("changelog-nv.clogrender.release_into")
+
+// One release section, as a string.
+//
+// ```novo
+// use clogrender
+// use clogdoc
+//
+// fn main() [io]
+//     match clogdoc.parse("# Changelog\n\n## [Unreleased]\n")
+//         Err(_) => println("not a changelog")
+//         Ok(d)  =>
+//             match clogdoc.unreleased(d)
+//                 None    => println("no unreleased section")
+//                 Some(r) => println(clogrender.release(d, r))
+// ```
+pub fn release(d: clogdoc.ClogDoc, r: clogdoc.ClogRelease) -> Str []
+    todo("changelog-nv.clogrender.release")
+
+// How many bytes one release section renders to.
+//
+// Answered by walking rather than by rendering, so sizing a buffer
+// costs no allocation.
+pub fn release_len(d: clogdoc.ClogDoc, r: clogdoc.ClogRelease) -> Int []
+    todo("changelog-nv.clogrender.release_len")
+
+// A whole document, into a buffer.
+pub fn document_into(out: Bytes, off: Int, d: clogdoc.ClogDoc) -> Bytes []
+    todo("changelog-nv.clogrender.document_into")
+
+// A whole document, as a string.
+//
+// Title, preamble, every release newest first, and the link
+// definitions at the foot.  NOT byte-identical to what `parse` read —
+// a renderer normalises, which is what it is for — but
+// `parse(document(parse(text)))` equals `parse(text)` for every
+// document `parse` accepts.
+pub fn document(d: clogdoc.ClogDoc) -> Str []
+    todo("changelog-nv.clogrender.document")
+
+// How many bytes a whole document renders to.
+pub fn document_len(d: clogdoc.ClogDoc) -> Int []
+    todo("changelog-nv.clogrender.document_len")
+
+// Write a document to a sink, and be charged exactly what the sink
+// costs.
+//
+// THE ONE EFFECT-POLYMORPHIC SIGNATURE IN THIS PACKAGE.  `W: Write[e]`
+// binds the standard library's `Write` trait's effect parameter and the
+// clause is `[e]`, so the row means "whatever the impl behind `W`
+// supplies": a file charges the caller `[fs]`, a terminal `[io]`, an
+// in-memory buffer nothing — and this package has spent none of them
+// (SPEC § 5.6, `docs/publishing.md` § How a `core` package takes a
+// stream from its host).
+pub fn document_to<W: Write[e]>(w: W, d: clogdoc.ClogDoc) -> ?IoError [e]
+    todo("changelog-nv.clogrender.document_to")
+
+// One release heading, alone.
+//
+// `## [1.2.3] - 2026-09-11`, or `## [Unreleased]`, or
+// `## [1.2.3] - 2026-09-11 [YANKED]`.  Published because a tool
+// splicing one line into a file it is otherwise leaving alone wants
+// exactly this and nothing around it.
+pub fn heading(v: ?semver.Version, when: ?civil.CivilDate, yanked: Bool) -> Str []
+    todo("changelog-nv.clogrender.heading")
+
+// One heading, into a buffer.
+pub fn heading_into(out: Bytes, off: Int, v: ?semver.Version, when: ?civil.CivilDate,
+                    yanked: Bool) -> Bytes []
+    todo("changelog-nv.clogrender.heading_into")
+
+// One kind's section, alone: the `###` heading and its bullets.
+pub fn section(d: clogdoc.ClogDoc, s: clogdoc.ClogSection) -> Str []
+    todo("changelog-nv.clogrender.section")
+
+// One kind's section, into a buffer.
+pub fn section_into(out: Bytes, off: Int, d: clogdoc.ClogDoc, s: clogdoc.ClogSection) -> Bytes []
+    todo("changelog-nv.clogrender.section_into")
+
+// ── From commits ─────────────────────────────────────────────────────
+
+// A release built out of a range of commits.
+//
+// Each commit becomes `clogconv.entry_of` under the kind
+// `clogconv.kind_of` puts it in; a commit the map drops is not there.
+// The sections come out in the standard's order and an empty one is
+// omitted, because `### Removed` with nothing under it is a heading a
+// reader stops trusting.
+//
+// The version and date are the caller's, for the same reason
+// `clogdoc.promote` takes them: a `core` package has no clock, and a
+// version is a decision rather than a derivation — `clogbump` is what
+// derives one, and it is a separate call so that a person can look at
+// the answer before it is written into a file.
+//
+// ```novo
+// use clogrender
+// use clogconv
+//
+// fn main() [io]
+//     let cs = [clogconv.parse_subject("feat: a new thing")]
+//     let r = clogrender.release_from_commits(cs, clogconv.default_map(),
+//                                             None, None, false)
+//     println("${r.yanked}")
+// ```
+pub fn release_from_commits(commits: [clogconv.ClogCommit], m: clogconv.ClogMap, v: ?semver.Version,
+                            when: ?civil.CivilDate, yanked: Bool) -> clogdoc.ClogRelease []
+    todo("changelog-nv.clogrender.release_from_commits")
+
+// A release built out of commits, rendered straight to a string.
+//
+// The one call a release script makes: commits in, a section to paste
+// out.  Written over `release_from_commits` and `release`, and here
+// because a script that had to build a document to render one section
+// would be building a document.
+pub fn notes_from_commits(commits: [clogconv.ClogCommit], m: clogconv.ClogMap, v: ?semver.Version,
+                          when: ?civil.CivilDate) -> Str []
+    todo("changelog-nv.clogrender.notes_from_commits")
+
+// A document with a release built from commits added at the top.
+//
+// What a release job does to a file that already exists: the new
+// section goes above the newest release and below the Unreleased one,
+// and everything else in the file is untouched.
+pub fn insert_release(d: clogdoc.ClogDoc, r: clogdoc.ClogRelease) -> clogdoc.ClogDoc []
+    todo("changelog-nv.clogrender.insert_release")
+
+// ── Escaping ─────────────────────────────────────────────────────────
+
+// Text that will not change a changelog's structure when written as a
+// bullet.
+//
+// A commit description beginning with `#`, `-` or a digit and a dot is
+// a heading or a list item to a markdown reader, and a changelog that
+// grew a section because somebody wrote `## why` in a commit message
+// is a changelog whose next parse finds a release that does not exist.
+// Escapes exactly those, and nothing else: a description containing
+// backticks or a link is markup the author meant.
+pub fn escape_entry(text: Str) -> Str []
+    todo("changelog-nv.clogrender.escape_entry")
+
+// Whether a string would change a document's structure if written as a
+// bullet.
+pub fn needs_escape(text: Str) -> Bool []
+    todo("changelog-nv.clogrender.needs_escape")

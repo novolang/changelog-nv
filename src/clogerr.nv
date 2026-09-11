@@ -1,0 +1,88 @@
+// clogerr.nv — the short list of things that are not a changelog at
+// all.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// THIS LIST IS DELIBERATELY SHORT, and that is the design.  Almost
+// everything wrong with a CHANGELOG.md is a `clogcheck.ClogIssue`: a
+// missing title, a release with no date, sections in the wrong order,
+// a version that does not parse.  Those are findings about a document
+// that was read, because a package that refused them could not be
+// pointed at a real project's file — and the first thing anybody does
+// with this package is point it at one.
+//
+// What is left here is the two cases where there is nothing to hand
+// back at all, and the three that belong to an EDIT rather than to a
+// read.
+
+// Why a document could not be read, or an edit could not be made.
+pub enum ClogError
+    // The text is not markdown this package can walk.  Rare by
+    // construction — markdown has no syntax errors — and reachable
+    // through the depth bound below, which is the one thing a document
+    // can do that a walker must refuse.
+    ClogNotMarkdown(at: Int, why: Str)
+    // The document nests deeper than the parser will follow.  A bound
+    // rather than a stack overflow: a changelog arrives from a package
+    // tarball and is therefore input from outside.
+    ClogTooDeep(at: Int, limit: Int)
+    // `promote` on a document with no Unreleased section.  There is
+    // nothing to promote, and creating one to promote would cut a
+    // release with no notes.
+    ClogNothingToPromote
+    // `promote` on a document whose Unreleased section is empty.  The
+    // fault this package exists to make impossible to commit by
+    // accident: a version whose notes nobody wrote.
+    ClogUnreleasedEmpty
+    // `promote` with a version that is not greater than one already in
+    // the document.  The registry's own MONOTONIC refusal, asked one
+    // step earlier where it is still cheap to act on.
+    ClogVersionNotNewer(cutting: Str, latest: Str)
+    // `add_entry` with an entry that is empty or only whitespace.
+    ClogEmptyEntryText
+
+// `ClogError` is an `Error`, which is what lets
+// `Result<ClogDoc, ClogError>` exist at all (SPEC § 3.4) and what makes
+// `!` propagate one out of a caller with an error type of its own.
+impl Error for ClogError
+    // The one-line message, naming the rule rather than the parser's
+    // state.  The offset is in the value and not in the sentence, so a
+    // caller renders `file:line:col` in its own diagnostic shape.
+    fn message(self) -> Str
+        todo("changelog-nv.ClogError.message")
+
+// The byte offset an error refers to, or -1 for the four that refer to
+// no place in the document.
+pub fn error_at(e: ClogError) -> Int []
+    todo("changelog-nv.clogerr.error_at")
+
+// Whether an error is about reading a document rather than editing
+// one.
+//
+// The split a caller acts on: a read failure means the bytes are not a
+// changelog, and an edit failure means the call asked for something the
+// document cannot do.
+pub fn is_parse_error(e: ClogError) -> Bool []
+    todo("changelog-nv.clogerr.is_parse_error")
+
+// `<file>: <message>`, or `<file>:<line>:<col>: <message>` when the
+// error has a position and the caller supplies the document.
+//
+// `file` is the caller's — this package never opened anything.
+//
+// ```novo
+// use clogerr
+//
+// fn main() [io]
+//     println(clogerr.render(ClogUnreleasedEmpty, "CHANGELOG.md"))
+// ```
+pub fn render(e: ClogError, file: Str) -> Str []
+    todo("changelog-nv.clogerr.render")
+
+// How deep `clogdoc.parse` will follow a document before refusing.
+//
+// The number markdown-nv's own `MdLimits` is given when `clogdoc.parse`
+// builds its options, published so a caller passing its own options
+// through `clogdoc.parse_with` knows what it is replacing.
+pub fn default_depth() -> Int []
+    todo("changelog-nv.clogerr.default_depth")

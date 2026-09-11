@@ -1,0 +1,310 @@
+// clogcheck_tests.nv — the findings, the severities, and the renderer
+// they are compared against.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: changelog-nv.<module>.<fn>`.
+//
+// THE ASSERTION THIS SUITE EXISTS FOR: `check` answers a LIST and never
+// an error. A changelog that does not follow the standard is the
+// answer — a real project's real file, which is what anybody points
+// this at first — and an error there would make the ordinary case
+// travel the failure path.
+
+use std.test
+use std.list
+use std.str
+use std.bytes
+use semver
+use civil
+use clogdoc
+use clogconv
+use clogcheck
+use clogrender
+
+fn v(text: Str) -> semver.Version
+    semver.parse(text) ?? Version { major: 0, minor: 0, patch: 0, pre: "", build: "" }
+
+fn good() -> Str
+    let lines = ["# Changelog",
+                 "",
+                 "## [Unreleased]",
+                 "",
+                 "### Added",
+                 "",
+                 "- a pending thing",
+                 "",
+                 "## [1.2.0] - 2026-08-01",
+                 "",
+                 "### Added",
+                 "",
+                 "- a thing",
+                 "",
+                 "[Unreleased]: https://example.invalid/compare/v1.2.0...HEAD",
+                 "[1.2.0]: https://example.invalid/releases/v1.2.0",
+                 ""]
+    list.join(lines, "\n")
+
+@test
+fn test_a_conforming_document_has_nothing_to_say_about_it() [io]
+    let d = clogdoc.parse(good())!
+
+    test.case("no findings at all")
+    test.assert(list.len(clogcheck.check(d)) == 0)
+
+    test.case("and it conforms")
+    test.assert(clogcheck.is_conforming(d))
+    test.assert(list.len(clogcheck.must_fix(d)) == 0)
+
+@test
+fn test_check_answers_every_finding_and_not_the_first() [io]
+    let bad = str.join(["## [1.2.0]",
+                        "",
+                        "### Performance",
+                        "",
+                        "- a thing",
+                        "",
+                        "### Added",
+                        "",
+                        "## [1.3.0] - 2026-09-01",
+                        "",
+                        "### Added",
+                        "",
+                        "- another",
+                        ""],
+                        "\n")
+    let d = clogdoc.parse(bad)!
+    let issues = clogcheck.check(d)
+
+    test.case("six faults at least: title, Unreleased, kind, empty section, date, order")
+    test.assert(list.len(issues) >= 6)
+
+    test.case("and every one of them names a place in the document")
+    for i in issues
+        test.assert(clogcheck.issue_at(i) >= 0)
+        test.assert(clogcheck.issue_message(i) != "")
+
+@test
+fn test_the_severity_split_is_what_lets_a_gate_be_turned_on() [io]
+    let untidy = str.join(["## [Unreleased]",
+                           "",
+                           "### Added",
+                           "",
+                           "- a thing",
+                           "",
+                           "## [1.0.0] - 2026-01-01",
+                           "",
+                           "### Fixed",
+                           "",
+                           "- a fix",
+                           ""],
+                           "\n")
+    let d = clogdoc.parse(untidy)!
+
+    test.case("a missing title is a finding")
+    test.assert(list.len(clogcheck.check(d)) > 0)
+
+    test.case("AND IT IS NOT A MUST-FIX — a consumer still reads every release")
+    test.assert(list.len(clogcheck.must_fix(d)) == 0)
+    test.assert(clogcheck.is_conforming(d))
+
+    test.case("an unknown kind IS a must-fix, because a grouping consumer drops it")
+    let unknown = clogdoc.parse("# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Performance\n\n- a thing\n")!
+    test.assert(list.len(clogcheck.must_fix(unknown)) >= 1)
+    test.assert(not clogcheck.is_conforming(unknown))
+
+    test.case("and so is a release out of order — every consumer takes the first as latest")
+    let out_of_order = clogdoc.parse("# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- a\n\n## [2.0.0] - 2026-02-01\n\n### Added\n\n- b\n")!
+    test.assert(not clogcheck.is_conforming(out_of_order))
+
+@test
+fn test_the_unreleased_section_is_checked_by_the_same_rules() [io]
+    // THE WHOLE ARGUMENT FOR UNRELEASED BEING A RELEASE: an empty
+    // section is the same fault before and after it ships.
+    let d = clogdoc.parse("# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- a\n")!
+
+    match clogdoc.unreleased(d)
+        None    => test.assert(false)
+        Some(u) =>
+            test.case("`### Fixed` with nothing under it, in the PENDING section")
+            test.assert(list.len(clogcheck.check_release(d, u)) >= 1)
+
+    test.case("and the same rule finds it in a released one")
+    let shipped = clogdoc.parse("# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Fixed\n")!
+    match clogdoc.release_of(shipped, v("1.0.0"))
+        None    => test.assert(false)
+        Some(r) => test.assert(list.len(clogcheck.check_release(shipped, r)) >= 1)
+
+@test
+fn test_a_finding_becomes_a_position_only_when_a_caller_prints_one() [io]
+    let d = clogdoc.parse("# Changelog\n\n## [1.0.0]\n\n### Added\n\n- a\n")!
+    let issues = clogcheck.check(d)
+    test.assert(list.len(issues) >= 1)
+
+    test.case("the offset is on the value")
+    test.assert(clogcheck.issue_at(issues[0]) >= 0)
+
+    test.case("the position costs a scan, so it is a separate call")
+    let p = clogcheck.issue_position(d, issues[0])
+    test.assert(p.0 >= 1)
+    test.assert(p.1 >= 1)
+
+    test.case("and the rendered form is what an editor's error list parses")
+    let line = clogcheck.render_issue(d, issues[0], "CHANGELOG.md")
+    test.assert(str.contains(line, "CHANGELOG.md:"))
+
+    test.case("every finding has a severity")
+    test.assert(clogcheck.severity_of(issues[0]) == ClogMustFix
+                or clogcheck.severity_of(issues[0]) == ClogShouldFix)
+
+@test
+fn test_the_publish_gate_asks_three_questions_in_one() [io]
+    let d = clogdoc.parse(good())!
+
+    test.case("conforming, a non-empty Unreleased section, a newer version: ready")
+    test.assert(clogcheck.ready_to_publish(d, v("1.3.0")))
+    test.assert(list.len(clogcheck.check_for_publish(d, v("1.3.0"))) == 0)
+
+    test.case("a version that is not newer is refused HERE, where it is still cheap")
+    test.assert(not clogcheck.ready_to_publish(d, v("1.1.0")))
+
+    test.case("an empty Unreleased section is refused — a release with no notes")
+    let empty = clogdoc.parse("# Changelog\n\n## [Unreleased]\n\n## [1.2.0] - 2026-08-01\n\n### Added\n\n- a\n")!
+    test.assert(not clogcheck.ready_to_publish(empty, v("1.3.0")))
+    test.assert(list.len(clogcheck.check_for_publish(empty, v("1.3.0"))) >= 1)
+
+@test
+fn test_the_renderer_and_the_parser_agree_about_the_format() [io]
+    let d = clogdoc.parse(good())!
+
+    test.case("a rendered document parses back to the same releases")
+    let again = clogdoc.parse(clogrender.document(d))!
+    test.assert(list.len(again.releases) == list.len(d.releases))
+    test.assert(clogdoc.latest_version(again) == clogdoc.latest_version(d))
+
+    test.case("and to the same entries")
+    match clogdoc.unreleased(again)
+        None    => test.assert(false)
+        Some(u) => test.assert(clogdoc.entry_texts(again, u)[0] == "a pending thing")
+
+    test.case("the length is answered without building the string")
+    test.assert(clogrender.document_len(d) == str.len(clogrender.document(d)))
+
+@test
+fn test_a_release_renders_in_the_standard_shape() [io]
+    let d = clogdoc.parse(good())!
+
+    match clogdoc.release_of(d, v("1.2.0"))
+        None    => test.assert(false)
+        Some(r) =>
+            let text = clogrender.release(d, r)
+
+            test.case("the heading is a LINK REFERENCE, not a plain string")
+            test.assert(str.contains(text, "## [1.2.0] - 2026-08-01"))
+
+            test.case("the kind is a `###` heading")
+            test.assert(str.contains(text, "### Added"))
+
+            test.case("and the length agrees with the render")
+            test.assert(clogrender.release_len(d, r) == str.len(text))
+
+            test.case("rendering into a caller's buffer is the primitive")
+            let buf = bytes.zeros(clogrender.release_len(d, r) + 4)
+            test.assert(bytes.len(clogrender.release_into(buf, 0, d, r)) >= str.len(text))
+
+    test.case("a heading can be built alone, for a tool splicing one line")
+    let h = clogrender.heading(Some(v("1.2.0")), None, false)
+    test.assert(str.contains(h, "[1.2.0]"))
+    test.assert(clogrender.heading(None, None, false) == "## [Unreleased]")
+    test.assert(str.contains(clogrender.heading(Some(v("1.1.0")), None, true), "YANKED"))
+
+    test.case("and a heading into a buffer is the same bytes")
+    let hbuf = bytes.zeros(64)
+    test.assert(bytes.len(clogrender.heading_into(hbuf, 0, None, None, false)) >= 15)
+
+@test
+fn test_a_release_can_be_built_out_of_commits() [io]
+    let m = clogconv.default_map()
+    let commits = [clogconv.parse_subject("feat: a thing"),
+                   clogconv.parse_subject("fix: another"),
+                   clogconv.parse_subject("chore: tidy up")]
+
+    let r = clogrender.release_from_commits(commits, m, Some(v("1.3.0")),
+                                            Some(civil.date(2026, 9, 11)!), false)
+
+    test.case("two sections, because the chore is hidden")
+    test.assert(list.len(r.sections) == 2)
+
+    test.case("in the standard's order")
+    test.assert(r.sections[0].kind == ClogAdded)
+    test.assert(r.sections[1].kind == ClogFixed)
+
+    test.case("and an empty section is omitted rather than written as a bare heading")
+    test.assert(clogdoc.section_of(r, ClogSecurity) == None)
+
+    test.case("notes_from_commits is the one call a release script makes")
+    let notes = clogrender.notes_from_commits(commits, m, Some(v("1.3.0")),
+                                              Some(civil.date(2026, 9, 11)!))
+    test.assert(str.contains(notes, "### Added"))
+    test.assert(str.contains(notes, "a thing"))
+    test.assert(not str.contains(notes, "tidy up"))
+
+@test
+fn test_a_commit_message_cannot_grow_a_section_in_the_changelog() [io]
+    test.case("a description that starts with `##` would be a heading in a bullet")
+    test.assert(clogrender.needs_escape("## why this happened"))
+    test.assert(clogrender.needs_escape("- a nested bullet"))
+
+    test.case("and markup the author meant is left alone")
+    test.assert(not clogrender.needs_escape("a thing with `code` in it"))
+    test.assert(not clogrender.needs_escape("a [link](https://example.invalid/)"))
+
+    test.case("escaping changes exactly the structural characters")
+    test.assert(clogrender.escape_entry("a thing with `code`") == "a thing with `code`")
+    test.assert(clogrender.escape_entry("## why") != "## why")
+
+@test
+fn test_a_release_can_be_inserted_into_a_document_that_already_exists() [io]
+    let m = clogconv.default_map()
+    let d = clogdoc.parse(good())!
+    let r = clogrender.release_from_commits([clogconv.parse_subject("fix: a")], m,
+                                            Some(v("1.2.1")),
+                                            Some(civil.date(2026, 8, 15)!), false)
+    let d2 = clogrender.insert_release(d, r)
+
+    test.case("the new release is there")
+    // Spelled as a `match` rather than `!= None`: comparing a
+    // `?ClogRelease` against `None` reaches an open codegen defect,
+    // because `ClogRelease` carries `version: ?Version` and an optional
+    // comparison whose payload comparison contains another one emits a
+    // phi LLVM refuses.  The `match` is the same assertion.
+    match clogdoc.release_of(d2, v("1.2.1"))
+        None    => test.assert(false)
+        Some(_) => test.assert(true)
+
+    test.case("below the Unreleased section and above the older release")
+    test.assert(list.len(d2.releases) == 3)
+    test.assert(clogdoc.is_unreleased(d2.releases[0]))
+    test.assert(d2.releases[1].version == Some(v("1.2.1")))
+
+    test.case("and one section can be rendered on its own")
+    match clogdoc.section_of(r, ClogFixed)
+        None    => test.assert(false)
+        Some(s) =>
+            test.assert(str.contains(clogrender.section(d2, s), "### Fixed"))
+            let sbuf = bytes.zeros(256)
+            test.assert(bytes.len(clogrender.section_into(sbuf, 0, d2, s)) > 0)
+
+@test
+fn test_the_document_goes_to_a_sink_at_the_sinks_cost() [io]
+    let d = clogdoc.parse(good())!
+
+    test.case("an in-memory buffer charges nothing, and the write succeeds")
+    let w = Buffer.new()
+    match clogrender.document_to(w, d)
+        None    => test.assert(true)
+        Some(_) => test.assert(false)
+
+    test.case("document_into is the same bytes into a caller's buffer")
+    let buf = bytes.zeros(clogrender.document_len(d) + 4)
+    test.assert(bytes.len(clogrender.document_into(buf, 0, d))
+                >= clogrender.document_len(d))

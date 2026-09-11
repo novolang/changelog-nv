@@ -1,0 +1,180 @@
+// clogbump_tests.nv — the rule below 1.0 that changes the answer.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: changelog-nv.<module>.<fn>`.
+//
+// THE ASSERTION THIS SUITE EXISTS FOR: the same breaking commit takes
+// `1.4.2` to `2.0.0` and `0.4.2` to `0.5.0`. A function that derived a
+// bump from commits alone would get every pre-1.0 package on a registry
+// wrong, which is most of them.
+
+use std.test
+use std.list
+use semver
+use clogconv
+use clogbump
+
+fn v(text: Str) -> semver.Version
+    semver.parse(text) ?? Version { major: 0, minor: 0, patch: 0, pre: "", build: "" }
+
+fn breaking() -> [clogconv.ClogCommit]
+    [clogconv.parse_subject("feat!: the old flag is gone")]
+
+fn feature() -> [clogconv.ClogCommit]
+    [clogconv.parse_subject("feat: a new thing")]
+
+fn bugfix() -> [clogconv.ClogCommit]
+    [clogconv.parse_subject("fix: a thing")]
+
+@test
+fn test_the_same_commit_moves_two_versions_differently() [io]
+    let m = clogconv.default_map()
+
+    test.case("the commits alone say major")
+    test.assert(clogbump.bump_of(breaking(), m) == ClogMajor)
+
+    test.case("THE CLAIM: above 1.0 that is a major bump")
+    let above = clogbump.next_version(v("1.4.2"), breaking(), m)
+    test.assert(above.major == 2)
+    test.assert(above.minor == 0)
+    test.assert(above.patch == 0)
+
+    test.case("and below 1.0 the same commits are a MINOR bump")
+    let below = clogbump.next_version(v("0.4.2"), breaking(), m)
+    test.assert(below.major == 0)
+    test.assert(below.minor == 5)
+    test.assert(below.patch == 0)
+
+    test.case("which is the rule `is_pre_1_0` names, so a tool can explain itself")
+    test.assert(clogbump.is_pre_1_0(v("0.4.2")))
+    test.assert(not clogbump.is_pre_1_0(v("1.0.0")))
+
+@test
+fn test_a_feature_and_a_fix_move_the_same_way_under_the_rule() [io]
+    let m = clogconv.default_map()
+
+    test.case("above 1.0, a feature is a minor bump")
+    let a = clogbump.next_version(v("1.4.2"), feature(), m)
+    test.assert(a.minor == 5)
+    test.assert(a.patch == 0)
+
+    test.case("and below 1.0 it is a patch")
+    let b = clogbump.next_version(v("0.4.2"), feature(), m)
+    test.assert(b.minor == 4)
+    test.assert(b.patch == 3)
+
+    test.case("a fix is a patch on both sides")
+    test.assert(clogbump.next_version(v("1.4.2"), bugfix(), m).patch == 3)
+    test.assert(clogbump.next_version(v("0.4.2"), bugfix(), m).patch == 3)
+
+@test
+fn test_nothing_in_the_range_is_no_bump() [io]
+    let m = clogconv.default_map()
+
+    test.case("an empty range moves nothing")
+    test.assert(clogbump.bump_of([], m) == ClogNoBump)
+
+    test.case("and a version with no bump is the version it was")
+    let same = clogbump.next_version(v("1.4.2"), [], m)
+    test.assert(same.major == 1)
+    test.assert(same.minor == 4)
+    test.assert(same.patch == 2)
+
+    test.case("a hidden type moves nothing either")
+    test.assert(clogbump.bump_of([clogconv.parse_subject("chore: tidy")], m) == ClogNoBump)
+
+@test
+fn test_the_largest_bump_in_a_range_wins() [io]
+    let m = clogconv.default_map()
+    let mixed = [clogconv.parse_subject("fix: a"),
+                 clogconv.parse_subject("feat: b"),
+                 clogconv.parse_subject("fix: c")]
+
+    test.case("a feature among fixes is a minor bump")
+    test.assert(clogbump.bump_of(mixed, m) == ClogMinor)
+
+    let with_break = [clogconv.parse_subject("fix: a"),
+                      clogconv.parse_message("feat: b\n\nBREAKING CHANGE: gone\n")]
+
+    test.case("and one breaking change among anything is a major one")
+    test.assert(clogbump.bump_of(with_break, m) == ClogMajor)
+
+    test.case("bump_at_least is how the two are combined, and how a caller raises one")
+    test.assert(clogbump.bump_at_least(ClogPatch, ClogMinor) == ClogMinor)
+    test.assert(clogbump.bump_at_least(ClogMajor, ClogPatch) == ClogMajor)
+    test.assert(clogbump.bump_at_least(ClogNoBump, ClogNoBump) == ClogNoBump)
+
+@test
+fn test_a_caller_can_raise_an_answer_this_module_cannot_see() [io]
+    let m = clogconv.default_map()
+
+    test.case("raising a toolchain floor breaks with every signature identical")
+    let derived = clogbump.bump_of(bugfix(), m)
+    let raised = clogbump.bump_at_least(derived, ClogMinor)
+    test.assert(raised == ClogMinor)
+
+    test.case("and apply_bump takes it, under the same pre-1.0 rule")
+    let next = clogbump.apply_bump(v("0.4.2"), raised)
+    test.assert(next.minor == 5)
+    test.assert(next.patch == 0)
+
+@test
+fn test_a_prerelease_suffix_is_dropped_by_the_next_version() [io]
+    let m = clogconv.default_map()
+
+    test.case("the next patch of 1.2.3-rc.1 is 1.2.3")
+    let p = clogbump.next_version(v("1.2.3-rc.1"), bugfix(), m)
+    test.assert(p.patch == 3)
+    test.assert(p.pre == "")
+
+    test.case("and the next minor is 1.3.0")
+    let n = clogbump.next_version(v("1.2.3-rc.1"), feature(), m)
+    test.assert(n.minor == 3)
+    test.assert(n.pre == "")
+    test.assert(n.build == "")
+
+@test
+fn test_the_breaking_commits_are_answered_so_a_person_can_check_the_verdict() [io]
+    let mixed = [clogconv.parse_subject("fix: a"),
+                 clogconv.parse_subject("feat!: b"),
+                 clogconv.parse_message("fix: c\n\nBREAKING CHANGE: gone\n")]
+
+    test.case("both spellings are in the list")
+    test.assert(list.len(clogbump.breaking_commits(mixed)) == 2)
+
+    test.case("and a range with none answers an empty list")
+    test.assert(list.len(clogbump.breaking_commits(bugfix())) == 0)
+
+@test
+fn test_a_bump_has_a_name_that_round_trips() [io]
+    test.case("four names")
+    test.assert(clogbump.bump_name(ClogNoBump) == "none")
+    test.assert(clogbump.bump_name(ClogMajor) == "major")
+
+    test.case("that read back")
+    test.assert(clogbump.bump_from_name("minor") == Some(ClogMinor))
+
+    test.case("and a name outside the four answers None rather than a default")
+    test.assert(clogbump.bump_from_name("huge") == None)
+
+@test
+fn test_follows_catches_the_skip_the_registry_does_not() [io]
+    test.case("the next patch follows")
+    test.assert(clogbump.follows(v("1.2.2"), v("1.2.3")))
+
+    test.case("a version that is not greater does not — the registry's own MONOTONIC")
+    test.assert(not clogbump.follows(v("1.2.3"), v("1.2.3")))
+    test.assert(not clogbump.follows(v("1.2.3"), v("1.2.2")))
+
+    test.case("AND THE ONE NOTHING REFUSES TODAY: a skip that leaves a hole")
+    test.assert(not clogbump.follows(v("1.2.2"), v("1.2.5")))
+
+@test
+fn test_one_commits_bump_is_answerable_on_its_own() [io]
+    let m = clogconv.default_map()
+
+    test.case("for a caller reporting on one commit at a time")
+    test.assert(clogbump.bump_of_commit(clogconv.parse_subject("feat: a"), m) == ClogMinor)
+    test.assert(clogbump.bump_of_commit(clogconv.parse_subject("fix: a"), m) == ClogPatch)
+    test.assert(clogbump.bump_of_commit(clogconv.parse_subject("feat!: a"), m) == ClogMajor)
+    test.assert(clogbump.bump_of_commit(clogconv.parse_subject("chore: a"), m) == ClogNoBump)

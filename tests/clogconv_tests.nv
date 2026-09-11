@@ -1,0 +1,192 @@
+// clogconv_tests.nv — Conventional Commits, and the mapping that is a
+// value.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: changelog-nv.<module>.<fn>`.
+//
+// THE ASSERTION THIS SUITE EXISTS FOR: `unmapped_types` reports a type
+// the map says nothing about. A library that hard-coded a mapping drops
+// a project's `perf:` commits with no error and no warning — just a
+// section that never appears — and this is the call that makes the drop
+// visible before the changelog is written.
+//
+// THE VECTORS are the Conventional Commits specification's own
+// examples, including the two that regular-expression implementations
+// get wrong: `BREAKING CHANGE:` as a footer token containing a space,
+// and a body paragraph whose last line contains a colon.
+
+use std.test
+use std.list
+use std.str
+use clogdoc
+use clogconv
+
+@test
+fn test_a_subject_comes_apart_into_four_things() [io]
+    test.case("type, scope, breaking flag, description")
+    let c = clogconv.parse_subject("feat(parser)!: drop the old syntax")
+    test.assert(c.commit_type == "feat")
+    test.assert(c.scope == "parser")
+    test.assert(c.breaking)
+    test.assert(c.description == "drop the old syntax")
+    test.assert(clogconv.is_conventional(c))
+
+    test.case("a subject with no scope and no bang")
+    let p = clogconv.parse_subject("fix: a thing")
+    test.assert(p.commit_type == "fix")
+    test.assert(p.scope == "")
+    test.assert(not p.breaking)
+
+    test.case("a plain subject is answered, not refused — a history is full of them")
+    let plain = clogconv.parse_subject("just fixed it")
+    test.assert(not clogconv.is_conventional(plain))
+    test.assert(plain.commit_type == "")
+    test.assert(plain.subject == "just fixed it")
+
+@test
+fn test_breaking_has_two_spellings_and_both_count() [io]
+    test.case("the bang in the subject")
+    test.assert(clogconv.is_breaking(clogconv.parse_subject("feat!: a thing")))
+
+    test.case("THE ONE A REGULAR EXPRESSION MISSES: a footer token with a space in it")
+    let f = clogconv.parse_message("fix: a thing\n\nBREAKING CHANGE: the flag is gone\n")
+    test.assert(clogconv.is_breaking(f))
+    test.assert(clogconv.breaking_description(f) == "the flag is gone")
+
+    test.case("the hyphenated spelling the specification also allows")
+    test.assert(clogconv.is_breaking(
+        clogconv.parse_message("fix: a thing\n\nBREAKING-CHANGE: gone\n")))
+
+    test.case("and a commit that breaks nothing says so")
+    test.assert(not clogconv.is_breaking(clogconv.parse_subject("fix: a thing")))
+    test.assert(clogconv.breaking_description(clogconv.parse_subject("fix: a thing")) == "")
+
+@test
+fn test_the_footers_are_what_comes_after_the_last_blank_line_that_parses() [io]
+    let msg = str.join(["feat: add the thing",
+                        "",
+                        "The reason is this: a caller could not do it before.",
+                        "",
+                        "Reviewed-by: Ada",
+                        "Refs #42",
+                        ""],
+                        "\n")
+    let c = clogconv.parse_message(msg)
+
+    test.case("THE OTHER ONE A REGEX MISSES: a body line with a colon is a body line")
+    test.assert(str.contains(c.body, "The reason is this:"))
+
+    test.case("two footers, and the `#` separator is kept because it is not the same")
+    test.assert(list.len(c.footers) == 2)
+    test.assert(clogconv.footer(c, "Reviewed-by") == "Ada")
+    test.assert(clogconv.footer(c, "Refs") == "42")
+
+    test.case("a token reads back case-insensitively, because git treats them so")
+    test.assert(clogconv.footer(c, "reviewed-BY") == "Ada")
+
+    test.case("a repeated token answers a list, because Co-authored-by repeats")
+    let two = clogconv.parse_message("fix: a\n\nCo-authored-by: Ada\nCo-authored-by: Grace\n")
+    test.assert(list.len(clogconv.footers_of(two, "Co-authored-by")) == 2)
+
+    test.case("a token nothing carries answers the empty string")
+    test.assert(clogconv.footer(c, "Signed-off-by") == "")
+
+@test
+fn test_type_ok_is_the_grammar_and_says_nothing_about_the_vocabulary() [io]
+    test.case("a noun with no whitespace is a legal type, whatever noun it is")
+    test.assert(clogconv.type_ok("feat"))
+    test.assert(clogconv.type_ok("wibble"))
+
+    test.case("and the specification allows any of them, so this does not judge")
+    test.assert(clogconv.type_ok("perf"))
+
+    test.case("what is refused is the grammar")
+    test.assert(not clogconv.type_ok(""))
+    test.assert(not clogconv.type_ok("two words"))
+
+@test
+fn test_the_map_is_a_value_and_the_default_is_arguable() [io]
+    let m = clogconv.default_map()
+
+    test.case("the six kinds the map targets are clogdoc's own")
+    test.assert(list.len(clogdoc.kinds()) == 6)
+
+    test.case("feat goes to Added and fix goes to Fixed")
+    test.assert(clogconv.kind_of(m, clogconv.parse_subject("feat: a")) == Some(ClogAdded))
+    test.assert(clogconv.kind_of(m, clogconv.parse_subject("fix: a")) == Some(ClogFixed))
+
+    test.case("a hidden type goes nowhere, which is different from being unmapped")
+    test.assert(clogconv.kind_of(m, clogconv.parse_subject("chore: a")) == None)
+    test.assert(clogconv.has_rule(m, "chore"))
+
+    test.case("`docs` is hidden by default, and is the first line most callers change")
+    test.assert(clogconv.has_rule(m, "docs"))
+    let docs_shown = clogconv.with_rule(m, "docs", ClogChanged, false)
+    test.assert(clogconv.kind_of(docs_shown, clogconv.parse_subject("docs: a"))
+                == Some(ClogChanged))
+
+    test.case("a breaking fix goes to Changed — a reader must not find it under Fixed")
+    test.assert(clogconv.kind_of(m, clogconv.parse_subject("fix!: a")) == Some(ClogChanged))
+
+@test
+fn test_an_unmapped_type_is_reported_before_the_changelog_is_written() [io]
+    let m = clogconv.default_map()
+    let commits = [clogconv.parse_subject("feat: a"),
+                   clogconv.parse_subject("wibble: b"),
+                   clogconv.parse_subject("wibble: c"),
+                   clogconv.parse_subject("wobble: d"),
+                   clogconv.parse_subject("not conventional at all")]
+
+    test.case("THE CALL THAT KEEPS A SILENT DROP FROM BEING SILENT")
+    let unmapped = clogconv.unmapped_types(m, commits)
+    test.assert(list.len(unmapped) == 2)
+
+    test.case("each type once, in the order first seen")
+    test.assert(unmapped[0] == "wibble")
+    test.assert(unmapped[1] == "wobble")
+
+    test.case("a map without a rule is not a map with a hidden rule")
+    test.assert(not clogconv.has_rule(m, "wibble"))
+
+    test.case("and with a fallback set, nothing is unmapped in the sense that matters")
+    test.assert(clogconv.kind_of(m, clogconv.parse_subject("wibble: b")) == None)
+
+@test
+fn test_commits_for_answers_one_kinds_commits_in_order() [io]
+    let m = clogconv.default_map()
+    let commits = [clogconv.parse_subject("feat: one"),
+                   clogconv.parse_subject("fix: two"),
+                   clogconv.parse_subject("feat: three")]
+
+    test.case("two features, in the order given")
+    let added = clogconv.commits_for(m, commits, ClogAdded)
+    test.assert(list.len(added) == 2)
+    test.assert(added[0].description == "one")
+    test.assert(added[1].description == "three")
+
+    test.case("and a kind nothing maps to answers an empty list")
+    test.assert(list.len(clogconv.commits_for(m, commits, ClogSecurity)) == 0)
+
+@test
+fn test_a_commit_becomes_the_entry_a_reader_needs() [io]
+    test.case("the description, with the scope in front of it")
+    test.assert(clogconv.entry_of(clogconv.parse_subject("feat(parser): a thing"))
+                == "parser: a thing")
+
+    test.case("and without one when there is no scope")
+    test.assert(clogconv.entry_of(clogconv.parse_subject("feat: a thing")) == "a thing")
+
+    test.case("a breaking commit opens with the marker a reader is looking for")
+    let b = clogconv.parse_message("feat!: a thing\n\nBREAKING CHANGE: the flag is gone\n")
+    test.assert(str.contains(clogconv.entry_of(b), "BREAKING"))
+    test.assert(str.contains(clogconv.entry_of(b), "the flag is gone"))
+
+@test
+fn test_a_subject_round_trips_through_its_parts() [io]
+    test.case("the inverse of parse_subject, which a message hook needs")
+    let s = "feat(parser)!: drop the old syntax"
+    test.assert(clogconv.subject_of(clogconv.parse_subject(s)) == s)
+
+    test.case("and a plain subject comes back as itself")
+    test.assert(clogconv.subject_of(clogconv.parse_subject("just fixed it"))
+                == "just fixed it")
