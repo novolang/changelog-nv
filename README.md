@@ -1,329 +1,269 @@
 # changelog-nv
 
-**Status: NOT IMPLEMENTED — interface only.**
+[Keep a Changelog 1.1](https://keepachangelog.com/en/1.1.0/) is a convention for
+writing a project's `CHANGELOG.md`, "a curated, chronologically ordered list of
+notable changes for each version of a project".
+[Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) is a
+convention for writing a commit subject line so that a tool can read it. This
+package brings both to novo-lang, and joins them: a changelog is read into
+releases, a commit subject is read into its parts, and the commits of a range
+become the next version and the release section that announces it.
 
-Every public function below is published with its signature and its
-effect row, and every body is `todo()`. Installing this package works;
-calling it panics with `not implemented`.
+**Status: NOT IMPLEMENTED — interface only.** Every function is declared with
+its full signature, but every body is a `todo()` that panics when called. The
+package is published so its design can be reviewed and depended on before it is
+implemented. Version 0.1.0 will be the first working release.
 
-## What this is
+## What it is
 
-Keep a Changelog 1.1 and Conventional Commits, together: a
-`CHANGELOG.md` read into releases, a commit subject read into its
-parts, the next version derived from a range of commits, a release
-section rendered in the standard shape, and a document checked against
-the standard with reasons.
+A **changelog** is a file at the root of a project that records what changed in
+each released version. Keep a Changelog fixes its shape. The file opens with a
+`# Changelog` title and a paragraph of boilerplate. Under that comes one `##`
+heading per version, newest first, each carrying the version in brackets and the
+date it was released: `## [1.2.3] - 2026-09-11`. Under each version heading come
+`###` headings, one per **kind** of change. There are exactly six kinds: Added,
+Changed, Deprecated, Removed, Fixed and Security. Under each kind is a list of
+bullets, one per change.
 
-- `clogdoc` — the document, and the six kinds;
-- `clogconv` — Conventional Commits, and the mapping neither standard
-  defines;
-- `clogbump` — the next version, and the rule below 1.0 that changes it;
-- `clogrender` — the standard shape, into the caller's buffer;
-- `clogcheck` — a document against the standard, with reasons;
-- `clogerr` — the short list of things that are not a changelog at all.
+The topmost `##` heading is the **Unreleased section**, written `##
+[Unreleased]`. It collects the changes that have been made but not yet
+released. Cutting a release means giving that section a version and a date.
+
+A **conventional commit** is a commit whose subject line has the shape
+`<type>[(<scope>)][!]: <description>`. The type is a noun such as `feat` or
+`fix`. The optional scope names the part of the project the change touched. The
+optional `!` marks a breaking change. A commit message may also carry
+**footers** after its body, of the shape `Token: value` or `Token #value`, and
+one of those tokens is `BREAKING CHANGE`.
+
+The two conventions do not know about each other. Conventional Commits has an
+open type vocabulary and names only `feat` and `fix`. Keep a Changelog has six
+closed kinds. Nothing in either document says which type goes in which kind, so
+this package takes that mapping as a value the caller supplies.
+
+Every value this package produces is read out of a string the caller already
+holds. No file is opened, no repository is cloned and no commit is fetched. The
+commits arrive as values.
+
+## Install
 
 ```
 novo pkg add changelog-nv
-novo pkg build
-novo test
 ```
 
-## The one example that will work
+## Example
 
-This is a publish.
-
-```novo ignore
+```novo
+use std.list
+use semver
+use civil
 use clogdoc
+use clogconv
+use clogbump
 use clogcheck
 use clogrender
 
-fn cut(text: Str, v: Version, when: CivilDate) -> Result<Str, ClogError>
-    let d = clogdoc.parse(text)!
-    let d2 = clogdoc.promote(d, v, when)!
-    Ok(clogrender.document(d2))
+// The bytes a release tool has just read from CHANGELOG.md.
+fn source() -> Str
+    "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a new flag\n\n## [0.4.2] - 2026-08-01\n\n### Fixed\n\n- a thing\n"
+
+fn main() [io]
+    match clogdoc.parse(source())
+        Err(_) => println("the text is not a changelog")
+        Ok(d)  =>
+            // Every rule of the standard this document breaks. Never an error.
+            println("${list.len(clogcheck.check(d))} findings")
+
+            // The commits in the range being released, one parsed subject each.
+            let commits = [clogconv.parse_subject("feat!: the old flag is gone")]
+
+            // The newest version already in the file, and the one to cut next.
+            let current = clogdoc.latest_version(d) ?? Version { major: 0, minor: 0, patch: 0, pre: "", build: "" }
+            let next = clogbump.next_version(current, commits, clogconv.default_map())
+            println("${next.major}.${next.minor}.${next.patch}")
+
+            // Give the Unreleased section that version and the caller's date.
+            match civil.date(2026, 9, 15)
+                Err(_)   => println("not a date")
+                Ok(when) =>
+                    match clogdoc.promote(d, next, when)
+                        Err(_)  => println("there is nothing to promote")
+                        Ok(cut) => println(clogrender.document(cut))
 ```
 
-`promote` refuses a document with no Unreleased section, and one whose
-Unreleased section is empty — because a version whose notes nobody
-wrote is what this package exists to make hard to publish by accident.
+Build and test with `novo pkg build` and `novo test`. Today `novo test` fails on
+purpose: every test reaches a `not implemented` panic.
 
-## The load-bearing interface: Unreleased is a release with no version
+## What the package contains
 
-```novo ignore
-pub struct ClogRelease
-    version: ?Version
-    date: ?CivilDate
-    yanked: Bool
-    sections: [ClogSection]
-    …
+| Module | Contents |
+| --- | --- |
+| `clogdoc` | The document: a parsed `CHANGELOG.md`, its releases, its six kinds, its entries and its link definitions, and the three calls that edit one. |
+| `clogconv` | Conventional Commits: a subject or a whole message read into type, scope, breaking flag, description and footers, and the map from a commit type to a changelog kind. |
+| `clogbump` | The next version: what a range of commits implies, and what that becomes once the rule for versions below 1.0.0 is applied. |
+| `clogrender` | Writing a document or one release back out in the standard's shape, into a buffer, into a string, or into a sink the caller supplies. |
+| `clogcheck` | Checking a document against the standard. Answers a list of findings, each with a severity, a message and a byte offset. |
+| `clogerr` | The error type. Every case is either text that cannot be read as a document at all, or an edit the document cannot accept. |
+
+## How to choose an entry point
+
+**A tool that reads or edits an existing file starts at `clogdoc`.** Call
+`parse` on the text, read the releases and entries out of the result, and call
+`promote`, `add_entry` or `set_link` to change it.
+
+**A tool that derives a release from git history starts at `clogconv`.** Parse
+each commit subject, then hand the list to `clogbump.next_version` for the
+version and to `clogrender.release_from_commits` for the section.
+
+**A gate that only says yes or no starts at `clogcheck`.** Use
+`is_conforming` for a document on its own and `ready_to_publish` for a document
+plus the version about to be cut.
+
+`clogrender` offers each output in three shapes. `*_into(out, off, …)` appends
+into a buffer the caller sized and hands it back; it is the primitive, and a
+tool writing a hundred releases into one page allocates once. `*(…) -> Str`
+returns a fresh string. `*_to(w, …)` writes into any sink implementing `Write`,
+so a file costs the file's effects and an in-memory buffer costs none.
+
+## The rules a user needs
+
+1. **The Unreleased section is a release with no version.**
+   `ClogRelease.version` is an optional. `None` means the section is the
+   Unreleased one. The same checker, the same renderer and the same accessors
+   serve both, and `clogdoc.is_unreleased` is the question. Keep a Changelog
+   1.1, "What makes a good changelog?".
+2. **The six kinds are closed.** `ClogKind` has exactly the six headings the
+   standard names. A document with a `### Performance` section is a `clogcheck`
+   finding and not a seventh kind, so a reader can tell a typo from a decision.
+   Keep a Changelog 1.1, "Types of changes".
+3. **`clogdoc.parse` refuses only text it cannot walk as markdown.** A missing
+   title, a release with no date, sections in the wrong order and a version that
+   does not parse are all `clogcheck` findings about a document that was read.
+   Point the package at a real project's file and it answers.
+4. **`clogcheck.check` cannot fail.** It answers a list of every finding, not
+   the first one. Gate on `must_fix`, which is the findings a consumer will read
+   wrongly: an unknown `###` heading, a duplicate kind, releases that are not
+   newest-first. `should_fix` findings are documents that are merely untidy.
+5. **`promote` takes the date as an argument.** This package has no clock. It
+   refuses a document with no Unreleased section, and one whose Unreleased
+   section holds no entries. Keep a Changelog 1.1, "What makes a good
+   changelog?".
+6. **The commit-type mapping is a value you supply.** `clogconv.default_map()`
+   is a starting point, and it hides `docs`, which is right for a library and
+   wrong for a documentation project. A type the map says nothing about is
+   dropped from the changelog. Run `clogconv.unmapped_types` over your own
+   history before you write one. Conventional Commits 1.0.0, specification item
+   16.
+7. **A breaking change has two spellings.** A `!` before the colon in the
+   subject and a `BREAKING CHANGE:` footer mean the same thing. Call
+   `clogconv.is_breaking`, which reads both. Conventional Commits 1.0.0,
+   specification items 12 and 13.
+8. **`BREAKING CHANGE` is the one footer token containing a space.** Every
+   other token replaces whitespace with `-`. Conventional Commits 1.0.0,
+   specification item 9.
+9. **`clogbump.next_version` takes the current version, not only the commits.**
+   Below 1.0.0 a breaking change is a minor bump and everything else is a patch.
+   Above it, a breaking change is a major bump, a `feat` a minor and a `fix` a
+   patch, and the largest wins. Semantic Versioning 2.0.0, item 4, and
+   novo-lang's own registry rule for `0.x` releases.
+10. **Some breaking changes are in no commit message.** Raising the toolchain
+    version a package needs breaks a consumer with every signature identical.
+    `clogbump.bump_at_least` is how a caller raises an answer this package
+    cannot derive.
+11. **An entry's text is a byte range into the source.** `clogdoc.entry_text`
+    turns one into a string. Nothing reads inside it, so an entry's inline code,
+    links and markup survive a parse and a render unchanged.
+12. **Rendering reorders sections into the standard's order.** That is the one
+    place this package changes the order of anything, and it happens only when
+    a section is written from scratch. `clogdoc.parse` keeps the document's own
+    order so that `clogcheck` can report it.
+
+## What is not included
+
+- **Reading a repository.** No commit is fetched and no `.git` directory is
+  opened. The commits arrive as values, which is what makes the package
+  testable against a fixture rather than against a clone.
+- **A clock.** `promote` stamps the date it is given. A date the library
+  invented would be one nobody could reproduce.
+- **git-cliff's template language.** A changelog's shape is the standard's. A
+  project that wants another shape reads the entries out with
+  `clogdoc.entry_texts` and writes its own.
+- **A profile for documents in another shape.** This package models Keep a
+  Changelog. A release file that uses `##` per release with prose bullets is a
+  different format.
+- **Running on a microcontroller.** Every value here is a list of sections over
+  a document held in memory, and no device reads a changelog.
+- **A second parser for markdown.** Deciding what counts as a heading is
+  CommonMark's business, so the walk is markdown-nv's. A heading written as text
+  over a row of dashes is a heading. A `###` inside a fenced code block is not.
+
+## Related packages
+
+- [semver-nv](https://novo-lang.org/packages/semver-nv) is the version type this
+  package reads out of a release heading and produces from a bump. Comparing two
+  of its values is how `clogcheck` finds releases that are out of order.
+- [calendar-nv](https://novo-lang.org/packages/calendar-nv) is the date type. A
+  release heading carries an ISO 8601 calendar date, and `CivilDate` is that
+  value.
+- [markdown-nv](https://novo-lang.org/packages/markdown-nv) is the CommonMark
+  parser the document walk is built on. `clogdoc.parse_with` takes its options,
+  so the nesting bound and the extension set are the caller's.
+- [toml-edit-nv](https://novo-lang.org/packages/toml-edit-nv) does for a
+  `novo.toml` what this package does for a `CHANGELOG.md`: it edits a file in
+  place and keeps everything it did not change.
+- `std.markdown` in the standard library renders markdown to HTML. It has no
+  model of a changelog and no notion of a release.
+
+## Tests
+
+```bash
+novo test tests                          # every suite
+novo test tests/clogdoc_tests.nv         # the document, and promoting one
+novo test tests/clogconv_tests.nv        # the commit parse and the mapping
+novo test tests/clogbump_tests.nv        # the next version
+novo test tests/clogcheck_tests.nv       # the findings and their severities
 ```
 
-Keep a Changelog says a document opens with an `## [Unreleased]`
-section, and that a release is cut by giving that section a version and
-a date. Almost every tool models the two as different things — a list
-of pending lines, and then a list of past releases — and pays for it
-three times:
+`novo test` fails on purpose today. Every assertion reaches a `not implemented:
+changelog-nv.<module>.<fn>` panic, because every body is a `todo()`. The tests
+are the specification the implementation will have to satisfy.
 
-- **`clogcheck.check` runs the same rules over it.** A `### Fixed` with
-  no entries under it is the same fault whether or not the section has
-  shipped, and a tool whose pending section is a different type cannot
-  check it until it is too late to fix cheaply.
-- **`clogrender.release_into` writes it in the same shape**, so what a
-  person reads in the pending section is what they will read in the
-  released one.
-- **`promote(doc, version, date)` is a two-field change.** That is the
-  publish. A design with two types has to re-serialise the file to cut
-  a release, which is how a changelog loses its own formatting on the
-  day it matters most.
+The document fixtures come from the `spec/` directory of the `keep-a-changelog`
+Ruby gem, which implements the standard. The commit fixtures are the
+Conventional Commits specification's own examples, including the two that
+regular-expression implementations get wrong: a `BREAKING CHANGE:` footer token
+containing a space, and a body paragraph whose last line contains a colon and is
+not a footer.
 
-The date is the **caller's**, because a `core` package has no clock and
-a changelog stamped with a date the library invented is one nobody can
-reproduce. Same rule as tar-nv's and zip-nv's headers.
+The suite asserts that the same breaking commit takes `1.4.2` to `2.0.0` and
+`0.4.2` to `0.5.0`, that `clogconv.unmapped_types` names a type the map is
+silent about, that `clogcheck.check` answers a list rather than an error, and
+that `promote` dates the Unreleased section and leaves every other byte alone.
 
-## The second decision worth arguing: the commit-type mapping is a value
+## Implementation status
 
-Conventional Commits has an **open** type vocabulary — `feat` and `fix`
-are the only two it names. Keep a Changelog has exactly **six** kinds.
-Nothing anywhere defines a mapping between them.
+| Item | Implemented |
+| --- | --- |
+| `clogdoc.ClogKind`, `.ClogEntry`, `.ClogSection`, `.ClogRelease`, `.ClogDoc`, `.ClogLink` | declared |
+| `clogdoc.parse`, `.parse_with`, `.position_of`, `.empty_doc` | no |
+| `clogdoc`'s fourteen readers, from `unreleased` to `link_of` | no |
+| `clogdoc.kind_name`, `.kind_from_name`, `.kinds`, `.kind_order` | no |
+| `clogdoc.promote`, `.add_entry`, `.set_link` | no |
+| `clogconv.ClogCommit`, `.ClogFooter`, `.ClogRule`, `.ClogMap` | declared |
+| `clogconv.parse_subject`, `.parse_message`, `.is_conventional` | no |
+| `clogconv.is_breaking`, `.breaking_description`, `.footer`, `.footers_of`, `.type_ok` | no |
+| `clogconv.subject_of`, `.entry_of` | no |
+| `clogconv.default_map`, `.with_rule`, `.kind_of`, `.has_rule`, `.unmapped_types`, `.commits_for` | no |
+| `clogbump.ClogBump` | declared |
+| `clogbump`'s ten functions, from `bump_of` to `follows` | no |
+| `clogrender`'s sixteen functions, from `release_into` to `needs_escape` | no |
+| `clogcheck.ClogSeverity`, `.ClogIssue` | declared |
+| `clogcheck`'s eleven functions, from `check` to `ready_to_publish` | no |
+| `clogerr.ClogError` and `impl Error for ClogError` | declared |
+| `clogerr.error_at`, `.is_parse_error`, `.render`, `.default_depth` | no |
 
-git-cliff puts one in a configuration file for exactly that reason, and
-a library that hard-coded one silently drops a project's `perf:`
-commits from its changelog: not an error, not a warning, just a section
-that never appears.
+## Licence
 
-So `ClogMap` is a value the caller supplies, and three things follow:
+Apache-2.0. See `LICENSE`.
 
-- `default_map()` is a defensible starting point with its choices
-  argued in place. Two are worth naming here: **`docs` is hidden**,
-  which is right for a library and wrong for a documentation project,
-  and is the first line most callers will change; and **`revert` →
-  Removed** is wrong when the thing reverted was itself a removal, and
-  no mapping can know that.
-- `ClogRule.hidden` is a field rather than an absence from the list,
-  because "this type is deliberately not in the changelog" and "nobody
-  has decided about this type" are different states.
-- **`unmapped_types(map, commits)`** is the call that keeps the silent
-  drop from being silent: a project that runs it over its own history
-  is told which of its types are about to vanish, before the changelog
-  is written.
-
-## The third: the next version needs the current one
-
-```novo ignore
-pub fn next_version(current: Version, commits: [ClogCommit], m: ClogMap) -> Version
-```
-
-Over a range of commits: any breaking change is a major bump, any
-`feat` a minor, any `fix` a patch, the largest wins. **And then the 0.x
-rule changes it** — below 1.0.0 a breaking change is a *minor* bump and
-everything else is a patch, because `0.x` is where a package says it is
-still finding its shape and a project that let Conventional Commits
-drive `major` would have reached 1.0.0 in its third week.
-
-A function that answered a bump from the commits alone would be
-answering half the question, and the half it left out is the half that
-differs between every pre-1.0 package on a registry and every post-1.0
-one. `bump_of` is the commit half on its own, for a caller that wants
-to report "these commits contain a breaking change" without a version
-in hand.
-
-**What no commit message can say**, and `bump_at_least` is the way out:
-`docs/publishing.md` § Choosing the version makes "breaking" a test
-about whether a program that used the old version still compiles and
-behaves correctly — so raising the toolchain floor is a break with
-every signature identical. `clogbump` cannot see that, says so, and
-takes the correction.
-
-## `check` cannot fail
-
-A changelog that does not follow the standard is the **answer** — a
-list of findings a person acts on — and modelling it as an error would
-make the ordinary case, a real project's real file, travel the failure
-path. schema-nv and openapi-nv make the same split for the same reason.
-
-So `clogerr.ClogError` is deliberately a short list: two cases where
-there is nothing to hand back (a document the markdown walker refuses,
-one that nests past the bound) and four that belong to an *edit* rather
-than a read. Everything else — a missing title, a release with no date,
-sections in the wrong order, a version that does not parse — is a
-`ClogIssue`.
-
-`ClogSeverity` splits those again. `ClogMustFix` is a document a
-consumer will read **wrongly**: an unknown `###` kind that a grouping
-consumer drops, a duplicate kind where "the Added section" is
-ambiguous, releases that are not newest-first when every consumer takes
-the first as the latest. `ClogShouldFix` is a document that is merely
-not in the standard's shape. A publish gate that refused on the second
-class could not be turned on for an existing project; one that refuses
-on `must_fix` can.
-
-## Dependencies, and why each one is a type rather than a convenience
-
-**semver-nv `^0.1.4`** — the version. A release heading carries one, a
-bump produces one, and comparing two is how `check` finds a changelog
-whose releases are out of order. Answering a `Str` would make every
-consumer parse it again, and `novo pkg publish`'s own monotonicity rule
-is exactly this comparison.
-
-**calendar-nv `^0.0.2`** — the date. Keep a Changelog's heading is
-`## [1.2.3] - 2026-09-11`, an ISO 8601 calendar date, and `CivilDate`
-is that value. A `Str` would have made "is this changelog in
-chronological order" a string comparison that happens to work for
-four-digit years.
-
-**markdown-nv `^0.0.1`** — the headings. A changelog *is* markdown, and
-deciding what is a heading is CommonMark's business: a setext heading
-(`Added` over a row of dashes) is one, a `###` inside a fenced code
-block is not, and a regular expression over lines gets both wrong.
-git-cliff's parser is that regular expression, and its failure is
-silent — a section simply does not appear. `clogdoc.parse_with` takes
-markdown-nv's own `MdOptions`, so the nesting bound and the extension
-set are the caller's.
-
-## The layer, and why
-
-`core`. A changelog is a string the caller already holds and a commit
-subject is another one; parsing either is arithmetic over bytes, and
-rendering writes into a buffer the caller owns. Nothing is read, no
-repository is opened — **the commits arrive as values**, which is what
-keeps the package `[]` and what makes it testable against a fixture
-instead of against a clone.
-
-The one place a stream could have entered is writing a document out:
-
-```novo ignore
-pub fn document_to<W: Write[e]>(w: W, d: ClogDoc) -> ?IoError [e]
-```
-
-The clause is `[e]`, bound by the caller's `Write` impl, so a file
-costs `[fs]` and an in-memory buffer costs nothing. `*_into(out, off,
-…)` is the primitive under all three shapes, so a tool rendering a
-hundred releases into one page allocates once.
-
-## `@tier(embedded)` is not claimed
-
-Deliberately. Every value here is a list of lists of byte ranges over a
-document, and there is no device that reads a changelog. A claim would
-be one the probe could only keep by never allocating in a package whose
-whole job is building sections.
-
-## The reference implementations
-
-Two, and they disagree, which is why both are named.
-
-`keep-a-changelog` (the Ruby gem and the specification it implements)
-supplies the document model: the six kinds, the Unreleased section, the
-`[YANKED]` marker, the link-reference headings, and the ordering rules.
-Its own `spec/` fixtures are the parse vectors.
-
-`git-cliff` supplies the commit half: the Conventional Commits parse,
-the type-to-section mapping as configuration, and the derived bump.
-What is *not* ported is its template language — a changelog's shape is
-the standard's, and a project that wants another shape has
-`clogdoc.entry_texts` and its own writer.
-
-The Conventional Commits vectors are the specification's own examples,
-including the two the regular-expression implementations get wrong:
-`BREAKING CHANGE:` as a footer token containing a space, and a body
-paragraph whose last line contains a colon and is not a footer.
-
-## The consumers, and what adopting this would take
-
-**`novo pkg publish`** is the first, and this lane found that the rule
-it is supposed to enforce **is not enforced today**. `docs/publishing.md`
-says a `CHANGELOG.md` is on the tarball's allow-list (§ What ships) and
-that the version decision is recorded in one (§ Choosing the version),
-and nothing checks either: a publish of a package whose changelog has
-no entry for the version being cut succeeds, and the consumer deciding
-whether to upgrade reads a file that does not mention the release.
-
-The call that would change it is
-`clogcheck.check_for_publish(doc, cutting)`, which asks the three
-questions a publish needs in one — the document conforms, the
-Unreleased section carries something, and the version being cut is
-greater than every version already in the document. The third is the
-registry's own `MONOTONIC` refusal asked one step earlier, where the
-answer is still cheap to act on: today it arrives as an HTTP refusal
-after the tarball has been built.
-
-**The monorepo's own release cadence** is the second. `docs/releases.md`
-opens with an `## Unreleased` section that accumulates one line per
-change until a cut is called, and `docs/releases/unreleased.md` holds
-the detail. That is Keep a Changelog's discipline in a file that is not
-a `CHANGELOG.md`, and `clogdoc.promote` is what cutting it would be —
-but the shape differs (`##` per release, prose bullets rather than six
-kinds), so adopting it means either the file moves to the standard's
-shape or this package grows a second document profile. Naming the
-choice is this lane's job; making it is not.
-
-**A commit hook** — `clogconv.parse_subject` plus `clogconv.type_ok` —
-is the smallest consumer and the one that pays for itself first.
-
-**`novo pkg publish --dry-run`'s facets line** already prints
-`stability`, effects, tiers and the shard verdict. `clogcheck.check`'s
-findings belong beside them, because the dry run is the moment an
-author is looking.
-
-## What a row wanted to widen
-
-Nothing widened. Every function in this package is `[]` except
-`document_to`, whose row is its caller's.
-
-Four findings:
-
-1. **`docs/publishing.md` has no § Changelog.** The brief names one.
-   The rules are real but are spread across § What ships (the
-   allow-list) and § Choosing the version (record the answer), and
-   neither is checked at publish time. The section and the check are
-   both worth having, and § The consumers above names the call.
-2. **The clock is the one tension with `core`, and it resolves the same
-   way sarif-nv's did.** `promote` stamps a date; a `core` package has
-   none; the date is a parameter. calendar-nv would not have helped —
-   it has no clock either — so the dependency is for the TYPE and the
-   comparison, not for "now".
-3. **`docs/releases.md` is a changelog in a different shape.** The
-   project's own Unreleased discipline is prose bullets under `##`
-   headings, not six kinds under `###` ones. This package models the
-   standard; whether the project's file moves toward it is a decision
-   for whoever owns the release cadence.
-4. **A commit type nobody mapped is the silent failure of every tool in
-   this space**, and it is the one thing a library can fix without
-   choosing a mapping for its callers. `unmapped_types` is that, and it
-   is the function most likely to justify the package on the day
-   somebody adopts it.
-
-## A toolchain defect this lane hit, and did not design around
-
-Comparing a `?ClogRelease` against `None` reaches an open codegen
-defect: an optional comparison whose payload comparison contains
-another optional comparison emits a phi LLVM refuses to verify, and
-`ClogRelease` carries `version: ?Version` and `date: ?CivilDate`
-because the Unreleased section is a release with neither.
-
-**The type was not changed to avoid it.** The optional version is the
-load-bearing interface of the package, and bending it around a compiler
-bug would have bought a worse design for a defect that is already filed
-and open. The API suite spells that one assertion as a `match`, which
-is the filing's own documented workaround and the same assertion, with
-a comment at the site saying why.
-
-This is the fourth unrelated package to reach it from the same ordinary
-shape — a lookup that may miss, whose result has a field that may be
-absent — and the sighting added two facts to the filing: the inequality
-(`!= None`) lowers through the same path as the equality, and the
-payload's optional fields being types from *other packages* does not
-change the edge.
-
-## The surface
-
-| module | `pub fn` | `pub struct` | `pub enum` |
-| --- | --- | --- | --- |
-| `clogdoc` | 25 | 5 | 1 |
-| `clogconv` | 16 | 4 | 0 |
-| `clogbump` | 10 | 0 | 1 |
-| `clogrender` | 16 | 0 | 0 |
-| `clogcheck` | 11 | 0 | 2 |
-| `clogerr` | 4 | 0 | 1 |
-| **total** | **82** | **9** | **5** (34 variants) |
-
-One `impl Error` block, for `ClogError`.
+<!-- docs/writing-a-readme.md is the style guide for this page. -->

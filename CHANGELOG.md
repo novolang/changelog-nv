@@ -5,6 +5,10 @@ All notable changes to changelog-nv are recorded here. The format is
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with the pre-1.0 rule that a breaking change bumps the MINOR number.
 
+## 0.0.2 — 2026-09-15
+
+README rewritten to the package README style guide (docs/writing-a-readme.md); no change to the interface.
+
 ## 0.0.1 — 2026-09-11
 
 The **interface**: every signature and every effect row, and no bodies.
@@ -56,3 +60,21 @@ The **interface**: every signature and every effect row, and no bodies.
   sighting went on the filing.
 - The scaffold's `src/changelog.nv` was dropped for six prefixed
   modules.
+
+### Design notes
+
+- `docs/publishing.md` has no Changelog section. The rules are spread
+  across "What ships" (the allow-list) and "Choosing the version"
+  (record the answer), and neither is checked at publish time.
+  `clogcheck.check_for_publish(doc, cutting)` is the call that would
+  check all three: the document conforms, the Unreleased section
+  carries something, and the version being cut is greater than every
+  version already in the document.
+- `docs/releases.md` is a changelog in a different shape: prose
+  bullets under `##` headings rather than six kinds under `###` ones.
+  Adopting this package for it means either moving that file to the
+  standard's shape or growing a second document profile here.
+- The clock is the one tension with the `core` layer, and it resolves
+  the way sarif-nv's did: `promote` takes the date as a parameter.
+  calendar-nv would not have helped, because it has no clock either.
+  The dependency is for the type and the comparison, not for "now".

@@ -1,6 +1,6 @@
 [package]
 name        = "changelog-nv"
-version     = "0.0.1"
+version     = "0.0.2"
 description = "Keep a Changelog 1.1 and Conventional Commits together: a CHANGELOG.md parsed into releases with semver versions, calendar dates and the six change kinds; a commit subject parsed into type, scope, breaking flag and description; the next version derived from a range of commits under the pre-1.0 rule; a release section rendered into a caller's buffer; and a document checked against the standard with reasons.  Unreleased is a release with no version, which is what makes promoting one a two-field change.  Interface only — every body is a todo()."
 license     = "Apache-2.0"
 
